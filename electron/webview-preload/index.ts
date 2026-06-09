@@ -777,12 +777,13 @@ interface ChatMessagePayload {
 }
 
 function startAutoReplyScraper(partition: string) {
-  if (!partition) return
+  try {
+    if (!partition) return
 
-  // Register this webview with main process
-  ipcRenderer.invoke('chat:register', partition)
+    // Register this webview with main process
+    ipcRenderer.invoke('chat:register', partition)
 
-  const seen = new Set<string>()
+    const seen = new Set<string>()
 
   function extractMessages(): ChatMessagePayload[] {
     const msgs: ChatMessagePayload[] = []
@@ -858,9 +859,13 @@ function startAutoReplyScraper(partition: string) {
       }
     }
 
-    // Try common send buttons
-    const sendBtn =
-      document.querySelector('button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"], button:has(svg)') as HTMLElement | null
+    // Try common send buttons (avoid :has() - unsupported in older Chromium)
+    let sendBtn: HTMLElement | null =
+      document.querySelector('button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"]') as HTMLElement | null
+    if (!sendBtn) {
+      // fallback: first button inside a form near the input
+      sendBtn = input?.closest('form')?.querySelector('button') as HTMLElement | null
+    }
 
     if (sendBtn) {
       sendBtn.click()
@@ -870,6 +875,9 @@ function startAutoReplyScraper(partition: string) {
       input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
     }
   })
+  } catch (e) {
+    console.error('[AutoReply] scraper init error:', e)
+  }
 }
 
 if (document.readyState === 'loading') {
