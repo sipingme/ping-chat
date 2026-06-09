@@ -1453,9 +1453,25 @@ function AutoReplyPanel({
 
         <h3 className="proxy-section-title" id="reply-model-section">大模型设置</h3>
         <ProxyField label="模型" className="proxy-field--top">
-          <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
+          <CustomSelect
+            placeholder="选择模型"
+            value={config.model}
+            options={[
+              { value: 'gpt-4o', label: 'GPT-4o' },
+              { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+              { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+              { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+              { value: 'claude-3-opus', label: 'Claude 3 Opus' },
+              { value: 'deepseek-chat', label: 'DeepSeek Chat' },
+              { value: 'qwen-max', label: '通义千问 Max' },
+              { value: 'doubao-pro', label: '豆包 Pro' },
+              { value: 'moonshot-v1-8k', label: 'Kimi K1' },
+              { value: 'glm-4', label: 'GLM-4' },
+            ]}
+            onChange={(val) => onUpdateConfig({ model: val })}
+          />
         </ProxyField>
-        <div className="proxy-note">使用的模型名称</div>
+        <div className="proxy-note">选择常用大模型，或输入自定义模型名称</div>
 
         <ProxyField label="Endpoint">
           <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
