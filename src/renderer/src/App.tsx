@@ -223,6 +223,9 @@ export function App(): JSX.Element {
     blacklist: [] as string[],
     keywords: [] as string[],
     keywordResponse: '已收到您的问题，我们会尽快安排人工客服为您服务。',
+    temperature: 0.7,
+    maxTokens: 0,
+    contextRounds: 10,
   })
 
   useEffect(() => {
@@ -267,7 +270,10 @@ export function App(): JSX.Element {
       if (config.delaySeconds > 0) {
         await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
       }
-      const history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
+      let history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
+      if (config.contextRounds > 0) {
+        history = history.slice(-config.contextRounds * 2)
+      }
       const ruleParts: string[] = []
       const roleMap: Record<string, string> = {
         客服专员: '你是一位专业的客服专员',
@@ -312,7 +318,7 @@ export function App(): JSX.Element {
         const res = await fetch(config.endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-          body: JSON.stringify({ model: config.model, messages: msgs, temperature: 0.7 }),
+          body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
         })
         const data = await res.json()
         const reply = data.choices?.[0]?.message?.content
@@ -1355,7 +1361,7 @@ function AutoReplyPanel({
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
 }): JSX.Element {
@@ -1429,7 +1435,10 @@ function AutoReplyPanel({
     if (!config.apiKey || generating) return
     setGenerating(true)
     try {
-      const history = grouped[targetSender] || []
+      let history = grouped[targetSender] || []
+      if (config.contextRounds > 0) {
+        history = history.slice(-config.contextRounds * 2)
+      }
       const ruleParts: string[] = []
       const roleMap: Record<string, string> = {
         客服专员: '你是一位专业的客服专员',
@@ -1473,7 +1482,7 @@ function AutoReplyPanel({
       const res = await fetch(config.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages: msgs, temperature: 0.7 }),
+        body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
       })
       const data = await res.json()
       const reply = data.choices?.[0]?.message?.content
@@ -1829,6 +1838,52 @@ function AutoReplyPanel({
           </div>
         </ProxyField>
         <div className="proxy-note">收到含关键词的消息时，发送固定回复而不调用 AI</div>
+
+        <ProxyField label="Temperature">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(config.temperature * 100)}
+              onChange={(e) => onUpdateConfig({ temperature: Number(e.target.value) / 100 })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.temperature.toFixed(1)}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">控制 AI 回复的创意程度，越低越保守（0.0 ~ 1.0）</div>
+
+        <ProxyField label="最大字数">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={500}
+              step={50}
+              value={config.maxTokens}
+              onChange={(e) => onUpdateConfig({ maxTokens: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.maxTokens || '无'}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">限制 AI 单次回复的最大 token 数，0 表示不限制</div>
+
+        <ProxyField label="上下文轮数">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={20}
+              value={config.contextRounds}
+              onChange={(e) => onUpdateConfig({ contextRounds: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.contextRounds || '无'}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">AI 记忆多少轮对话历史，0 表示不限制</div>
 
         {replyTarget && (
           <div style={{ marginTop: 12 }}>
