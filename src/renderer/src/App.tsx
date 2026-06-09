@@ -1435,7 +1435,7 @@ function AutoReplyPanel({
         })}
 
         <h3 className="proxy-section-title" id="reply-settings-section">回复设置</h3>
-        <ProxyField label="System Prompt" className="proxy-field--top">
+        <ProxyField label="系统提示词" className="proxy-field--top">
           <textarea className="proxy-textarea" rows={5} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">定义 AI 助手的角色和回复风格</div>
@@ -1474,15 +1474,15 @@ function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">选择常用大模型，或输入自定义模型名称</div>
 
-        <ProxyField label="Endpoint">
+        <ProxyField label="API 地址">
           <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">OpenAI 兼容格式的 API 地址</div>
 
-        <ProxyField label="API Key">
+        <ProxyField label="API 密钥">
           <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">大模型服务的 API Key</div>
+        <div className="proxy-note">大模型服务的 API 密钥</div>
       </div>
     </aside>
   )
