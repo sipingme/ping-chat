@@ -1286,9 +1286,12 @@ function AutoReplyPanel({
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
 }): JSX.Element {
+  const [activeTab, setActiveTab] = useState<'overview' | 'reply' | 'model'>('overview')
   const [generating, setGenerating] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
   const grouped = useMemo(() => {
     const map: Record<string, ChatMessage[]> = {}
@@ -1298,8 +1301,15 @@ function AutoReplyPanel({
     })
     return map
   }, [messages])
-
   const senders = Object.keys(grouped)
+
+  useLayoutEffect(() => {
+    const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
+    if (activeBtn && tabsRef.current) {
+      const el = activeBtn as HTMLElement
+      setIndicatorStyle({ left: el.offsetLeft, width: el.offsetWidth })
+    }
+  }, [activeTab])
 
   const handleGenerate = async (targetSender: string) => {
     if (!config.apiKey || generating) return
@@ -1333,6 +1343,11 @@ function AutoReplyPanel({
     setReplyTarget('')
   }
 
+  const handleSwitchTab = (tab: 'overview' | 'reply' | 'model') => {
+    setActiveTab(tab)
+    setReplyTarget('')
+  }
+
   return (
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
@@ -1340,64 +1355,89 @@ function AutoReplyPanel({
         <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
       </div>
       <div className="translation-body proxy-body">
-        <ProxyField label="自动回复">
-          <Switch enabled={enabled} onChange={onToggleEnabled} />
-        </ProxyField>
-        <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
+        <div className="proxy-tabs" ref={tabsRef}>
+          <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => handleSwitchTab('overview')}>状态概览</button>
+          <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleSwitchTab('reply')}>回复设置</button>
+          <button className={activeTab === 'model' ? 'active' : ''} onClick={() => handleSwitchTab('model')}>大模型设置</button>
+          <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
+        </div>
 
-        <h3 className="proxy-section-title">AI 配置</h3>
-        <ProxyField label="API Key" className="proxy-field--top">
-          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
-        </ProxyField>
-        <ProxyField label="Endpoint">
-          <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
-        </ProxyField>
-        <ProxyField label="模型">
-          <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
-        </ProxyField>
-        <ProxyField label="System Prompt" className="proxy-field--top">
-          <textarea className="proxy-textarea" rows={3} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
-        </ProxyField>
+        {activeTab === 'overview' && (
+          <>
+            <ProxyField label="自动回复">
+              <Switch enabled={enabled} onChange={onToggleEnabled} />
+            </ProxyField>
+            <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
 
-        <h3 className="proxy-section-title">消息监控</h3>
-        <div className="proxy-note" style={{ marginBottom: 8 }}>已捕获 {messages.length} 条消息，来自 {senders.length} 个用户</div>
-        {senders.length > 0 && (
-          <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
+            <h3 className="proxy-section-title">消息监控</h3>
+            <div className="proxy-note" style={{ marginBottom: 8 }}>已捕获 {messages.length} 条消息，来自 {senders.length} 个用户</div>
+            {senders.length > 0 && (
+              <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
+            )}
+
+            {senders.map((sender) => {
+              const msgs = grouped[sender]
+              const last = msgs[msgs.length - 1]
+              return (
+                <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
+                    <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {last.content}
+                  </div>
+                  <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
+                      {generating ? '生成中…' : 'AI 回复'}
+                    </button>
+                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); setActiveTab('reply') }}>
+                      手动回复
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </>
         )}
 
-        {senders.map((sender) => {
-          const msgs = grouped[sender]
-          const last = msgs[msgs.length - 1]
-          return (
-            <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
-                <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
-              </div>
-              <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {last.content}
-              </div>
-              <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
-                  {generating ? '生成中…' : 'AI 回复'}
-                </button>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => setReplyTarget(sender)}>
-                  手动回复
-                </button>
-              </div>
-            </div>
-          )
-        })}
+        {activeTab === 'reply' && (
+          <>
+            <ProxyField label="System Prompt" className="proxy-field--top">
+              <textarea className="proxy-textarea" rows={5} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
+            </ProxyField>
+            <div className="proxy-note">定义 AI 助手的角色和回复风格</div>
 
-        {replyTarget && (
-          <div style={{ marginTop: 8 }}>
-            <div className="proxy-note">正在回复: {replyTarget}</div>
-            <textarea className="proxy-textarea" rows={2} placeholder="输入回复内容…" value={manualReply} onChange={(e) => setManualReply(e.target.value)} />
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <button className="apply-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={handleManualSend}>发送</button>
-              <button className="secondary-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={() => setReplyTarget('')}>取消</button>
-            </div>
-          </div>
+            {replyTarget && (
+              <div style={{ marginTop: 12 }}>
+                <div className="proxy-note">正在回复: {replyTarget}</div>
+                <textarea className="proxy-textarea" rows={3} placeholder="输入回复内容…" value={manualReply} onChange={(e) => setManualReply(e.target.value)} />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  <button className="apply-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={handleManualSend}>发送</button>
+                  <button className="secondary-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={() => setReplyTarget('')}>取消</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'model' && (
+          <>
+            <ProxyField label="API Key" className="proxy-field--top">
+              <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
+            </ProxyField>
+            <div className="proxy-note">大模型服务的 API Key</div>
+
+            <ProxyField label="Endpoint">
+              <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
+            </ProxyField>
+            <div className="proxy-note">OpenAI 兼容格式的 API 地址</div>
+
+            <ProxyField label="模型">
+              <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
+            </ProxyField>
+            <div className="proxy-note">使用的模型名称</div>
+          </>
         )}
       </div>
     </aside>
