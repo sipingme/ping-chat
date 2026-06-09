@@ -219,6 +219,10 @@ export function App(): JSX.Element {
     allowEmoji: true,
     templates: [] as string[],
     delaySeconds: 0,
+    role: '客服专员',
+    blacklist: [] as string[],
+    keywords: [] as string[],
+    keywordResponse: '已收到您的问题，我们会尽快安排人工客服为您服务。',
   })
 
   useEffect(() => {
@@ -249,11 +253,32 @@ export function App(): JSX.Element {
     void (async () => {
       const config = autoReplyConfigRef.current
       if (!config.apiKey) return
+      // Blacklist check
+      if (config.blacklist.length > 0 && config.blacklist.some((b) => lastMsg.sender.includes(b))) {
+        setAutoReplyProcessing(false)
+        return
+      }
+      // Keyword interception
+      if (config.keywords.length > 0 && config.keywords.some((k) => lastMsg.content.includes(k))) {
+        await window.pingChat.sendReply(lastMsg.partition, config.keywordResponse)
+        setAutoReplyProcessing(false)
+        return
+      }
       if (config.delaySeconds > 0) {
         await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
       }
       const history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
       const ruleParts: string[] = []
+      const roleMap: Record<string, string> = {
+        客服专员: '你是一位专业的客服专员',
+        销售顾问: '你是一位善于沟通的销售顾问',
+        技术支持: '你是一位耐心细致的技术支持工程师',
+        运营助手: '你是一位活跃的社交媒体运营助手',
+        自定义: config.systemPrompt,
+      }
+      if (roleMap[config.role] && config.role !== '自定义') {
+        ruleParts.push(roleMap[config.role])
+      }
       const toneMap: Record<string, string> = {
         热情: '语气要热情活泼',
         随意: '语气要轻松随意',
@@ -1330,7 +1355,7 @@ function AutoReplyPanel({
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
 }): JSX.Element {
@@ -1406,6 +1431,16 @@ function AutoReplyPanel({
     try {
       const history = grouped[targetSender] || []
       const ruleParts: string[] = []
+      const roleMap: Record<string, string> = {
+        客服专员: '你是一位专业的客服专员',
+        销售顾问: '你是一位善于沟通的销售顾问',
+        技术支持: '你是一位耐心细致的技术支持工程师',
+        运营助手: '你是一位活跃的社交媒体运营助手',
+        自定义: config.systemPrompt,
+      }
+      if (roleMap[config.role] && config.role !== '自定义') {
+        ruleParts.push(roleMap[config.role])
+      }
       const toneMap: Record<string, string> = {
         热情: '语气要热情活泼',
         随意: '语气要轻松随意',
@@ -1526,6 +1561,22 @@ function AutoReplyPanel({
         })}
 
         <h3 className="proxy-section-title" id="reply-settings-section">回复设置</h3>
+        <ProxyField label="角色设定">
+          <CustomSelect
+            placeholder="选择角色"
+            value={config.role}
+            options={[
+              { value: '客服专员', label: '客服专员' },
+              { value: '销售顾问', label: '销售顾问' },
+              { value: '技术支持', label: '技术支持' },
+              { value: '运营助手', label: '运营助手' },
+              { value: '自定义', label: '自定义' },
+            ]}
+            onChange={(val) => onUpdateConfig({ role: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 助手的身份角色，影响回复定位</div>
+
         <ProxyField label="系统提示词" className="proxy-field--top">
           <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
         </ProxyField>
@@ -1657,6 +1708,127 @@ function AutoReplyPanel({
           </div>
         </ProxyField>
         <div className="proxy-note">点击模板可快速填入手动回复框，点 × 删除</div>
+
+        <ProxyField label="黑名单" className="proxy-field--top">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                id="blacklist-input"
+                className="proxy-input"
+                placeholder="输入用户名关键词…"
+                style={{ flex: 1 }}
+              />
+              <button
+                className="secondary-action"
+                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                onClick={() => {
+                  const input = document.getElementById('blacklist-input') as HTMLInputElement
+                  const text = input?.value.trim()
+                  if (!text) return
+                  onUpdateConfig({ blacklist: [...config.blacklist, text] })
+                  input.value = ''
+                }}
+              >
+                添加
+              </button>
+            </div>
+            {config.blacklist.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {config.blacklist.map((b, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      background: '#2c3135',
+                      fontSize: 11,
+                      color: '#a8afb7',
+                    }}
+                  >
+                    <span>{b}</span>
+                    <span
+                      style={{ color: '#8c96a1', fontSize: 12, lineHeight: 1, cursor: 'pointer' }}
+                      onClick={() => {
+                        const next = config.blacklist.filter((_, idx) => idx !== i)
+                        onUpdateConfig({ blacklist: next })
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </ProxyField>
+        <div className="proxy-note">黑名单中的用户不会触发自动回复</div>
+
+        <ProxyField label="关键词拦截" className="proxy-field--top">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                id="keyword-input"
+                className="proxy-input"
+                placeholder="输入拦截关键词…"
+                style={{ flex: 1 }}
+              />
+              <button
+                className="secondary-action"
+                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                onClick={() => {
+                  const input = document.getElementById('keyword-input') as HTMLInputElement
+                  const text = input?.value.trim()
+                  if (!text) return
+                  onUpdateConfig({ keywords: [...config.keywords, text] })
+                  input.value = ''
+                }}
+              >
+                添加
+              </button>
+            </div>
+            {config.keywords.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {config.keywords.map((k, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      background: '#2c3135',
+                      fontSize: 11,
+                      color: '#a8afb7',
+                    }}
+                  >
+                    <span>{k}</span>
+                    <span
+                      style={{ color: '#8c96a1', fontSize: 12, lineHeight: 1, cursor: 'pointer' }}
+                      onClick={() => {
+                        const next = config.keywords.filter((_, idx) => idx !== i)
+                        onUpdateConfig({ keywords: next })
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea
+              className="proxy-textarea"
+              rows={2}
+              placeholder="触发关键词时的固定回复内容…"
+              value={config.keywordResponse}
+              onChange={(e) => onUpdateConfig({ keywordResponse: e.target.value })}
+            />
+          </div>
+        </ProxyField>
+        <div className="proxy-note">收到含关键词的消息时，发送固定回复而不调用 AI</div>
 
         {replyTarget && (
           <div style={{ marginTop: 12 }}>
