@@ -1409,7 +1409,7 @@ function AutoReplyPanel({
       <div className="translation-body proxy-body" ref={bodyRef}>
         <h3 className="proxy-section-title" id="reply-overview-section">状态概览</h3>
         <ProxyField label="自动回复">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Switch enabled={enabled} onChange={onToggleEnabled} />
             {enabled && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#4c7cff' }} />}
           </div>
