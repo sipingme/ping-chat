@@ -1054,7 +1054,7 @@ button {
   font-weight: 700;
 }
 
-.secondary-action:not(.wide) {
+.user-agent-actions .secondary-action {
   margin-left: 58px;
 }
 
@@ -1119,4 +1119,16 @@ button {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background: #33383e;
+  height: 4px;
+  border-radius: 2px;
+}
+
+input[type="range"]::-moz-range-track {
+  background: #33383e;
+  height: 4px;
+  border-radius: 2px;
 }

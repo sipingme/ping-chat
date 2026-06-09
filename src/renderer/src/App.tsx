@@ -274,41 +274,7 @@ export function App(): JSX.Element {
       if (config.contextRounds > 0) {
         history = history.slice(-config.contextRounds * 2)
       }
-      const ruleParts: string[] = []
-      const roleMap: Record<string, string> = {
-        客服专员: '你是一位专业的客服专员',
-        销售顾问: '你是一位善于沟通的销售顾问',
-        技术支持: '你是一位耐心细致的技术支持工程师',
-        运营助手: '你是一位活跃的社交媒体运营助手',
-        自定义: config.systemPrompt,
-      }
-      if (roleMap[config.role] && config.role !== '自定义') {
-        ruleParts.push(roleMap[config.role])
-      }
-      const toneMap: Record<string, string> = {
-        热情: '语气要热情活泼',
-        随意: '语气要轻松随意',
-        正式: '语气要正式专业',
-        幽默: '语气要幽默风趣',
-        冷静: '语气要冷静理性',
-        专业: '语气要专业严谨',
-      }
-      if (toneMap[config.tone]) ruleParts.push(toneMap[config.tone])
-      const lenMap: Record<string, string> = {
-        简短: '回复尽量简短，控制在50字以内',
-        适中: '回复长度适中，控制在100字左右',
-        详细: '回复可以详细一些，200字以内',
-      }
-      if (lenMap[config.length]) ruleParts.push(lenMap[config.length])
-      const salMap: Record<string, string> = {
-        您: "称呼用户为'您'",
-        亲: "称呼用户为'亲'",
-        老板: "称呼用户为'老板'",
-        不称呼: '不要加称呼',
-      }
-      if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
-      ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
-      const fullSystem = config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
+      const fullSystem = buildSystemPrompt(config)
 
       const msgs = [
         { role: 'system', content: fullSystem },
@@ -1340,6 +1306,44 @@ function SegmentedControl({ values, active, onChange }: { values: string[]; acti
   )
 }
 
+function buildSystemPrompt(config: { systemPrompt: string; role: string; tone: string; length: string; salutation: string; allowEmoji: boolean }): string {
+  const ruleParts: string[] = []
+  const roleMap: Record<string, string> = {
+    客服专员: '你是一位专业的客服专员',
+    销售顾问: '你是一位善于沟通的销售顾问',
+    技术支持: '你是一位耐心细致的技术支持工程师',
+    运营助手: '你是一位活跃的社交媒体运营助手',
+    自定义: config.systemPrompt,
+  }
+  if (roleMap[config.role] && config.role !== '自定义') {
+    ruleParts.push(roleMap[config.role])
+  }
+  const toneMap: Record<string, string> = {
+    热情: '语气要热情活泼',
+    随意: '语气要轻松随意',
+    正式: '语气要正式专业',
+    幽默: '语气要幽默风趣',
+    冷静: '语气要冷静理性',
+    专业: '语气要专业严谨',
+  }
+  if (toneMap[config.tone]) ruleParts.push(toneMap[config.tone])
+  const lenMap: Record<string, string> = {
+    简短: '回复尽量简短，控制在50字以内',
+    适中: '回复长度适中，控制在100字左右',
+    详细: '回复可以详细一些，200字以内',
+  }
+  if (lenMap[config.length]) ruleParts.push(lenMap[config.length])
+  const salMap: Record<string, string> = {
+    您: "称呼用户为'您'",
+    亲: "称呼用户为'亲'",
+    老板: "称呼用户为'老板'",
+    不称呼: '不要加称呼',
+  }
+  if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
+  ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
+  return config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
+}
+
 function AutoReplyPanel({
   session,
   onClose,
@@ -1439,41 +1443,7 @@ function AutoReplyPanel({
       if (config.contextRounds > 0) {
         history = history.slice(-config.contextRounds * 2)
       }
-      const ruleParts: string[] = []
-      const roleMap: Record<string, string> = {
-        客服专员: '你是一位专业的客服专员',
-        销售顾问: '你是一位善于沟通的销售顾问',
-        技术支持: '你是一位耐心细致的技术支持工程师',
-        运营助手: '你是一位活跃的社交媒体运营助手',
-        自定义: config.systemPrompt,
-      }
-      if (roleMap[config.role] && config.role !== '自定义') {
-        ruleParts.push(roleMap[config.role])
-      }
-      const toneMap: Record<string, string> = {
-        热情: '语气要热情活泼',
-        随意: '语气要轻松随意',
-        正式: '语气要正式专业',
-        幽默: '语气要幽默风趣',
-        冷静: '语气要冷静理性',
-        专业: '语气要专业严谨',
-      }
-      if (toneMap[config.tone]) ruleParts.push(toneMap[config.tone])
-      const lenMap: Record<string, string> = {
-        简短: '回复尽量简短，控制在50字以内',
-        适中: '回复长度适中，控制在100字左右',
-        详细: '回复可以详细一些，200字以内',
-      }
-      if (lenMap[config.length]) ruleParts.push(lenMap[config.length])
-      const salMap: Record<string, string> = {
-        您: "称呼用户为'您'",
-        亲: "称呼用户为'亲'",
-        老板: "称呼用户为'老板'",
-        不称呼: '不要加称呼',
-      }
-      if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
-      ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
-      const fullSystem = config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
+      const fullSystem = buildSystemPrompt(config)
 
       const msgs = [
         { role: 'system', content: fullSystem },
@@ -1589,7 +1559,7 @@ function AutoReplyPanel({
         <ProxyField label="系统提示词" className="proxy-field--top">
           <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">定义 AI 助手的角色和回复风格，下方规则会自动追加</div>
+        <div className="proxy-note">定义 AI 助手的角色和风格，规则自动追加</div>
 
         <ProxyField label="语气">
           <CustomSelect
@@ -1660,15 +1630,16 @@ function AutoReplyPanel({
         <ProxyField label="快捷模板" className="proxy-field--top">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
             <div style={{ display: 'flex', gap: 6 }}>
-              <input
+              <textarea
                 id="template-input"
-                className="proxy-input"
+                className="proxy-textarea"
+                rows={3}
                 placeholder="输入常用回复内容…"
-                style={{ flex: 1 }}
+                style={{ flex: 1, resize: 'vertical' }}
               />
               <button
                 className="secondary-action"
-                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                style={{ height: 28, padding: '0 10px', fontSize: 11, alignSelf: 'flex-start' }}
                 onClick={() => {
                   const input = document.getElementById('template-input') as HTMLInputElement
                   const text = input?.value.trim()
@@ -1830,14 +1801,14 @@ function AutoReplyPanel({
             )}
             <textarea
               className="proxy-textarea"
-              rows={2}
+              rows={4}
               placeholder="触发关键词时的固定回复内容…"
               value={config.keywordResponse}
               onChange={(e) => onUpdateConfig({ keywordResponse: e.target.value })}
             />
           </div>
         </ProxyField>
-        <div className="proxy-note">收到含关键词的消息时，发送固定回复而不调用 AI</div>
+        <div className="proxy-note">收到含关键词的消息时，发送回复不调用 AI</div>
 
         <ProxyField label="Temperature">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
@@ -1847,12 +1818,12 @@ function AutoReplyPanel({
               max={100}
               value={Math.round(config.temperature * 100)}
               onChange={(e) => onUpdateConfig({ temperature: Number(e.target.value) / 100 })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }}
+              style={{ flex: 1, accentColor: '#19d973' }}
             />
             <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.temperature.toFixed(1)}</span>
           </div>
         </ProxyField>
-        <div className="proxy-note">控制 AI 回复的创意程度，越低越保守（0.0 ~ 1.0）</div>
+        <div className="proxy-note">控制创意程度，越低越保守（0.0 ~ 1.0）</div>
 
         <ProxyField label="最大字数">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
@@ -1863,12 +1834,12 @@ function AutoReplyPanel({
               step={50}
               value={config.maxTokens}
               onChange={(e) => onUpdateConfig({ maxTokens: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }}
+              style={{ flex: 1, accentColor: '#19d973' }}
             />
             <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.maxTokens || '无'}</span>
           </div>
         </ProxyField>
-        <div className="proxy-note">限制 AI 单次回复的最大 token 数，0 表示不限制</div>
+        <div className="proxy-note">限制回复的最大 token 数，0 表示不限制</div>
 
         <ProxyField label="上下文轮数">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
@@ -1878,7 +1849,7 @@ function AutoReplyPanel({
               max={20}
               value={config.contextRounds}
               onChange={(e) => onUpdateConfig({ contextRounds: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }}
+              style={{ flex: 1, accentColor: '#19d973' }}
             />
             <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.contextRounds || '无'}</span>
           </div>
