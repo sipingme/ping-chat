@@ -1402,7 +1402,7 @@ function AutoReplyPanel({
     const onScroll = () => {
       const top = el.scrollTop
       const overviewEl = document.getElementById('reply-overview-section')
-      const settingsEl = document.getElementById('reply-settings-section')
+      const settingsEl = document.getElementById('reply-reply-section')
       const modelEl = document.getElementById('reply-model-section')
       const thresholds = [
         { id: 'overview' as const, offset: overviewEl ? overviewEl.offsetTop : 0 },
@@ -1481,7 +1481,7 @@ function AutoReplyPanel({
 
       <div className="proxy-tabs" ref={tabsRef}>
         <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => handleScrollTo('reply-overview-section')}>状态概览</button>
-        <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleScrollTo('reply-settings-section')}>回复设置</button>
+        <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleScrollTo('reply-reply-section')}>回复设置</button>
         <button className={activeTab === 'model' ? 'active' : ''} onClick={() => handleScrollTo('reply-model-section')}>大模型设置</button>
         <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
       </div>
@@ -1531,7 +1531,7 @@ function AutoReplyPanel({
                 <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
                   {generating ? '生成中…' : 'AI 回复'}
                 </button>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('reply-settings-section') }}>
+                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('reply-reply-section') }}>
                   手动回复
                 </button>
               </div>
@@ -1539,7 +1539,7 @@ function AutoReplyPanel({
           )
         })}
 
-        <h3 className="proxy-section-title" id="reply-settings-section">回复设置</h3>
+        <h3 className="proxy-section-title" id="reply-reply-section">回复设置</h3>
         <ProxyField label="角色设定">
           <CustomSelect
             placeholder="选择角色"
@@ -1667,7 +1667,7 @@ function AutoReplyPanel({
                       color: '#a8afb7',
                       cursor: 'pointer',
                     }}
-                    onClick={() => { setManualReply(t); handleScrollTo('reply-settings-section') }}
+                    onClick={() => { setManualReply(t); handleScrollTo('reply-reply-section') }}
                     title="点击填入手动回复"
                   >
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t}</span>

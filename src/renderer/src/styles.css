@@ -1121,14 +1121,3 @@ button {
   white-space: nowrap;
 }
 
-input[type="range"]::-webkit-slider-runnable-track {
-  background: #33383e;
-  height: 4px;
-  border-radius: 2px;
-}
-
-input[type="range"]::-moz-range-track {
-  background: #33383e;
-  height: 4px;
-  border-radius: 2px;
-}
