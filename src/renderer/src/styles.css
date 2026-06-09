@@ -397,12 +397,11 @@ button {
 .session-card {
   position: relative;
   width: 100%;
-  min-height: 78px;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  padding: 10px 8px;
+  padding: 8px 10px;
   border: 1px solid #2c3135;
-  border-radius: 7px;
+  border-radius: 6px;
   color: #cbd1d7;
   background: #1d2024;
   text-align: left;
@@ -417,33 +416,6 @@ button {
 .session-card.active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
-}
-
-.avatar-wrap {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.avatar {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #ff9b6a, #4c7cff);
-  color: #ffffff;
-  font-weight: 800;
-}
-
-.avatar-dot {
-  position: absolute;
-  right: 0;
-  bottom: 1px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid #1d2024;
-  border-radius: 50%;
-  background: #19d973;
 }
 
 .session-content {
@@ -466,31 +438,35 @@ button {
   white-space: nowrap;
 }
 
-.session-actions-row {
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 12px;
-  color: #8c96a1;
-  font-size: 10px;
-}
-
-.session-actions-row span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .session-card-actions {
   position: absolute;
-  top: 9px;
-  right: 7px;
+  top: 6px;
+  right: 6px;
   display: flex;
-  gap: 6px;
+  gap: 0px;
   color: #a8afb7;
 }
 
-.session-card-actions svg:hover {
+.session-card-actions button {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+}
+
+.session-card-actions button:hover {
   color: #ffffff;
+  background: #33383e;
+}
+
+.session-card-actions button.spinning svg {
+  animation: spin 1s ease-in-out;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .conversation-bottom {
@@ -818,7 +794,7 @@ button {
 
 .proxy-field {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
+  grid-template-columns: 100px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   margin-bottom: 9px;
@@ -1020,7 +996,7 @@ button {
 }
 
 .proxy-note {
-  margin: 0px 0 15px 100px;
+  margin: 0px 0 15px 110px;
   color: #8c949d;
   font-size: 12px;
   line-height: 1.35;

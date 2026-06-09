@@ -56,6 +56,10 @@ type FingerprintSettings = {
   hardwareConcurrency: string
   deviceMemory: string
   timezone: string
+  hideWebdriver: boolean
+  enableChromeObj: boolean
+  fakePlugins: boolean
+  fakeOuterSize: boolean
 }
 
 type ProxyConfig = {
@@ -148,7 +152,11 @@ function generateRandomFingerprint(): FingerprintSettings {
     audioContext: Math.random() > 0.3,
     hardwareConcurrency: hardwareOptions[Math.floor(Math.random() * hardwareOptions.length)],
     deviceMemory: memoryOptions[Math.floor(Math.random() * memoryOptions.length)],
-    timezone: timezoneOptions[Math.floor(Math.random() * timezoneOptions.length)]
+    timezone: timezoneOptions[Math.floor(Math.random() * timezoneOptions.length)],
+    hideWebdriver: true,
+    enableChromeObj: true,
+    fakePlugins: true,
+    fakeOuterSize: true,
   }
 }
 
@@ -185,6 +193,7 @@ export function App(): JSX.Element {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [webviewReloadKey, setWebviewReloadKey] = useState(0)
 
   useEffect(() => {
     void (async () => {
@@ -242,6 +251,7 @@ export function App(): JSX.Element {
     }
     setSessions((current) => [nextSession, ...current])
     setActiveSessionId(id)
+    setActiveRightTool('environment')
   }
 
   const closeSession = (id: string): void => {
@@ -251,6 +261,10 @@ export function App(): JSX.Element {
       const nextSession = nextSessions.find((session) => session.platformId === activePlatformId)
       setActiveSessionId(nextSession?.id ?? '')
     }
+  }
+
+  const refreshSession = (): void => {
+    setWebviewReloadKey((k) => k + 1)
   }
 
   const selectPlatform = (id: string): void => {
@@ -291,8 +305,9 @@ export function App(): JSX.Element {
             onCreateSession={createSession}
             onSelectSession={setActiveSessionId}
             onCloseSession={closeSession}
+            onRefreshSession={refreshSession}
           />
-          <MainPanel session={activeSession} platform={activePlatform} />
+          <MainPanel session={activeSession} platform={activePlatform} reloadTrigger={webviewReloadKey} />
           {activeRightTool === 'environment' && (
             <ProxyEnvironmentPanel
               session={activeSession}
@@ -373,7 +388,8 @@ function ConversationSidebar({
   activeSessionId,
   onCreateSession,
   onSelectSession,
-  onCloseSession
+  onCloseSession,
+  onRefreshSession,
 }: {
   platform: Platform
   sessions: ChatSession[]
@@ -381,6 +397,7 @@ function ConversationSidebar({
   onCreateSession: () => void
   onSelectSession: (id: string) => void
   onCloseSession: (id: string) => void
+  onRefreshSession?: () => void
 }): JSX.Element {
   return (
     <aside className="conversation-sidebar">
@@ -414,6 +431,7 @@ function ConversationSidebar({
               accent={platform.accent}
               onSelect={() => onSelectSession(session.id)}
               onClose={() => onCloseSession(session.id)}
+              onRefresh={onRefreshSession}
             />
           ))
         )}
@@ -434,48 +452,48 @@ function SessionCard({
   active,
   accent,
   onSelect,
-  onClose
+  onClose,
+  onRefresh,
 }: {
   session: ChatSession
   active: boolean
   accent: string
   onSelect: () => void
   onClose: () => void
+  onRefresh?: () => void
 }): JSX.Element {
+  const [spinning, setSpinning] = useState(false)
+  const handleRefresh = (event: React.MouseEvent): void => {
+    event.stopPropagation()
+    setSpinning(true)
+    onRefresh?.()
+  }
   return (
     <button
       className={`session-card ${active ? 'active' : ''}`}
       style={{ '--accent': accent } as CSSProperties}
       onClick={onSelect}
     >
-      <div className="avatar-wrap">
-        <div className="avatar">P</div>
-        <span className="avatar-dot" />
-      </div>
       <div className="session-content">
         <div className="session-title-row">
           <strong>{session.name}</strong>
         </div>
-        <div className="session-actions-row">
-          <span><MessageCircle size={12} />网页会话</span>
-          <span><Server size={12} />独立环境</span>
-        </div>
       </div>
       <div className="session-card-actions">
-        <RotateCw size={13} />
-        <X
-          size={14}
-          onClick={(event) => {
-            event.stopPropagation()
-            onClose()
-          }}
-        />
+        <button
+          className={spinning ? 'spinning' : ''}
+          onClick={handleRefresh}
+          onAnimationEnd={() => setSpinning(false)}
+        >
+          <RotateCw size={13} />
+        </button>
+        <button onClick={(event) => { event.stopPropagation(); onClose() }}><X size={14} /></button>
       </div>
     </button>
   )
 }
 
-function MainPanel({ session, platform }: { session?: ChatSession; platform: Platform }): JSX.Element {
+function MainPanel({ session, platform, reloadTrigger }: { session?: ChatSession; platform: Platform; reloadTrigger?: number }): JSX.Element {
   const hasWebviewPlatform = Boolean(session && (session.platformId === 'wechat' || session.platformId === 'xiaohongshu'))
   const webviewUrl = session?.platformId === 'wechat' ? WECHAT_WEB_URL : XIAOHONGSHU_WEB_URL
 
@@ -490,7 +508,7 @@ function MainPanel({ session, platform }: { session?: ChatSession; platform: Pla
       {hasWebviewPlatform ? (
         <div className="webview-stage">
           <webview
-            key={session?.id}
+            key={`${session?.id}-${reloadTrigger ?? 0}`}
             className="platform-webview"
             src={webviewUrl}
             partition={session?.partition}
@@ -645,7 +663,13 @@ function ProxyEnvironmentPanel({
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
   useEffect(() => {
-    setDraftFingerprint(session?.fingerprint)
+    setDraftFingerprint(session?.fingerprint ? {
+      ...session.fingerprint,
+      hideWebdriver: session.fingerprint.hideWebdriver ?? true,
+      enableChromeObj: session.fingerprint.enableChromeObj ?? true,
+      fakePlugins: session.fingerprint.fakePlugins ?? true,
+      fakeOuterSize: session.fingerprint.fakeOuterSize ?? true,
+    } : undefined)
     setDraftProxy(session?.proxy)
     setDraftCookie('')
   }, [session?.id])
@@ -1039,7 +1063,23 @@ function ProxySettingsTab({
           onChange={(v) => handleFp({ timezone: v })}
         />
       </ProxyField>
-      <div className="proxy-note">设置浏览器环境时区</div>
+      <div className="proxy-note">设置浏览器环境时区，匹配目标地区时间偏好</div>
+      <ProxyField label="WebDriver 隐藏">
+        <Switch enabled={fingerprint.hideWebdriver} onChange={(v) => handleFp({ hideWebdriver: v })} />
+      </ProxyField>
+      <div className="proxy-note">彻底隐藏 webdriver 检测标记，深度模拟真实用户行为特征</div>
+      <ProxyField label="Chrome 对象">
+        <Switch enabled={fingerprint.enableChromeObj} onChange={(v) => handleFp({ enableChromeObj: v })} />
+      </ProxyField>
+      <div className="proxy-note">注入 window.chrome，还原真实浏览器</div>
+      <ProxyField label="插件伪装">
+        <Switch enabled={fingerprint.fakePlugins} onChange={(v) => handleFp({ fakePlugins: v })} />
+      </ProxyField>
+      <div className="proxy-note">伪造插件列表，避免空列表暴露真实环境</div>
+      <ProxyField label="窗口尺寸">
+        <Switch enabled={fingerprint.fakeOuterSize} onChange={(v) => handleFp({ fakeOuterSize: v })} />
+      </ProxyField>
+      <div className="proxy-note">伪装窗口尺寸，匹配分辨率数据避免被检测</div>
       <h3 className="proxy-section-title" id="cookie-section">Cookie</h3>
       <ProxyField label="Cookie" className="proxy-field--top">
         <textarea

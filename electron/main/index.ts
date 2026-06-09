@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, net } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import { electronApp, optimizer } from '@electron-toolkit/utils'
 
 // 各 partition 的指纹配置
 const fingerprintStore = new Map<string, any>()
@@ -47,7 +47,9 @@ function createWindow(): void {
     backgroundColor: '#101112',
     trafficLightPosition: { x: 12, y: 10 },
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: existsSync(join(__dirname, '../preload/index.mjs'))
+        ? join(__dirname, '../preload/index.mjs')
+        : join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -57,9 +59,19 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    if (process.env.NODE_ENV !== 'production') mainWindow.webContents.openDevTools({ mode: 'detach' })
   })
 
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[Main] did-fail-load:', errorCode, errorDescription)
+  })
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    const prefix = ['info', 'warn', 'error', 'debug'][level] || 'log'
+    console.log(`[Renderer ${prefix}]`, message)
+  })
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    console.log('[Main] Loading dev URL:', process.env.ELECTRON_RENDERER_URL)
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))

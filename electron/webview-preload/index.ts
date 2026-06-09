@@ -13,6 +13,10 @@ type FpConfig = {
   timezone?: string
   proxyHost?: string
   proxyPort?: string
+  hideWebdriver?: boolean
+  enableChromeObj?: boolean
+  fakePlugins?: boolean
+  fakeOuterSize?: boolean
 }
 
 function parseNum(val?: string): number {
@@ -272,11 +276,35 @@ function injectWebGL(config: FpConfig) {
   }
 }
 
-/* ── 8. Plugin spoofing (empty list) ─────────────── */
-function injectPlugins() {
+/* ── 8. Plugin spoofing (browser-aware) ──────────── */
+function injectPlugins(config: FpConfig) {
+  if (config.fakePlugins === false) return
   try {
-    Object.defineProperty(navigator, 'plugins', { get: () => [] })
-    Object.defineProperty(navigator, 'mimeTypes', { get: () => [] })
+    const isFirefox = config.userAgent?.toLowerCase().includes('firefox')
+    if (isFirefox) {
+      Object.defineProperty(navigator, 'plugins', { get: () => undefined, configurable: true })
+      Object.defineProperty(navigator, 'mimeTypes', { get: () => undefined, configurable: true })
+      return
+    }
+    const pdfPlugin = {
+      name: 'Chrome PDF Viewer',
+      filename: 'internal-pdf-viewer',
+      description: 'Portable Document Format',
+      length: 1,
+      item: (idx: number) => idx === 0 ? pdfPlugin : null,
+      namedItem: () => null,
+      refresh: () => {},
+      [Symbol.iterator]: function* () { yield pdfPlugin },
+    }
+    const plugins = {
+      length: 1,
+      item: (idx: number) => idx === 0 ? pdfPlugin : null,
+      namedItem: () => null,
+      refresh: () => {},
+      [Symbol.iterator]: function* () { yield pdfPlugin },
+    }
+    Object.defineProperty(navigator, 'plugins', { get: () => plugins, configurable: true })
+    Object.defineProperty(navigator, 'mimeTypes', { get: () => ({ length: 0, item: () => null, namedItem: () => null }), configurable: true })
   } catch {
     // ignore
   }
@@ -545,6 +573,98 @@ function injectPerformanceMemory() {
   }
 }
 
+/* ── 14b. WebDriver hiding ───────────────────────── */
+function injectWebdriver(enabled?: boolean) {
+  if (enabled === false) return
+  try {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true })
+    if ('webdriver' in navigator) {
+      try { delete (navigator as any).webdriver } catch {}
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/* ── 14c. Chrome object spoofing ─────────────────── */
+function injectChrome(enabled?: boolean, os?: string) {
+  if (enabled === false) return
+  try {
+    const chromeObj: any = {
+      loadTimes: () => ({
+        commitLoadTime: Date.now() / 1000,
+        connectionInfo: 'h2',
+        finishDocumentLoadTime: 0,
+        firstPaintAfterLoadTime: 0,
+        firstPaintTime: 0,
+        navigationType: 'Other',
+        npnNegotiatedProtocol: 'h2',
+        requestTime: Date.now() / 1000,
+        startLoadTime: Date.now() / 1000,
+        wasAlternateProtocolAvailable: false,
+        wasFetchedViaSpdy: true,
+        wasNpnNegotiated: true,
+      }),
+      csi: () => ({ startE: Date.now(), onloadT: Date.now(), pageT: 1 }),
+      app: {
+        isInstalled: false,
+        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+        getDetails: () => null,
+        getIsInstalled: () => false,
+      },
+      runtime: {
+        OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+        OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+        PlatformArch: { ARM: 'arm', ARM64: 'arm64', X86_32: 'x86-32', X86_64: 'x86-64' },
+        PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+        PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+        RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+        getManifest: () => ({}),
+        getPlatformInfo: () => ({ arch: 'x86-64', nacl_arch: 'x86-64', os: os === 'MacOS' ? 'mac' : 'win' }),
+        getURL: () => '',
+        id: undefined,
+        connect: () => ({ disconnect: () => {}, onDisconnect: { addListener: () => {}, dispatch: () => {} }, onMessage: { addListener: () => {}, dispatch: () => {} }, postMessage: () => {}, name: '' }),
+        sendMessage: () => {},
+      },
+    }
+    Object.defineProperty(window, 'chrome', { get: () => chromeObj, configurable: true })
+  } catch {
+    // ignore
+  }
+}
+
+/* ── 14d. Outer dimensions spoofing ───────────────── */
+function injectOuterDimensions(config: FpConfig) {
+  if (config.fakeOuterSize === false) return
+  if (!config.resolution || config.resolution === '跟随系统') return
+  const m = config.resolution.match(/(\d+)\s*x\s*(\d+)/i)
+  if (!m) return
+  const innerW = parseInt(m[1], 10)
+  const innerH = parseInt(m[2], 10)
+  try {
+    Object.defineProperty(window, 'outerWidth', { get: () => innerW + 16, configurable: true })
+    Object.defineProperty(window, 'outerHeight', { get: () => innerH + 88, configurable: true })
+  } catch {
+    // ignore
+  }
+}
+
+/* ── 14e. Clean Electron globals ─────────────────── */
+function cleanElectronGlobals() {
+  try { delete (window as any).process } catch {}
+  try { delete (window as any).Buffer } catch {}
+  try { delete (window as any).ELECTRON } catch {}
+  try { delete (window as any).require } catch {}
+}
+
+/* ── 14f. Clean PhantomJS globals ───────────────── */
+function cleanPhantomGlobals() {
+  try { delete (window as any).callPhantom } catch {}
+  try { delete (window as any)._phantom } catch {}
+  try { delete (window as any).__phantomas } catch {}
+}
+
 /* ── 15. CSS Media query spoofing ──────────────────── */
 function injectMediaQueries() {
   try {
@@ -620,7 +740,12 @@ async function init() {
     injectWebRTC(config)
     injectGeolocation(config.geolocation || 'ask')
     injectWebGL(config)
-    injectPlugins()
+    injectPlugins(config)
+    injectWebdriver(config.hideWebdriver)
+    injectChrome(config.enableChromeObj, config.os)
+    injectOuterDimensions(config)
+    cleanElectronGlobals()
+    cleanPhantomGlobals()
     injectTimezone(config)
     injectFonts()
     injectWindowProps()
