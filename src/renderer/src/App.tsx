@@ -32,6 +32,7 @@ import {
   X,
   Zap,
   CircleHelp,
+  Loader2,
 } from 'lucide-react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
@@ -206,6 +207,7 @@ export function App(): JSX.Element {
   /* ── Auto Reply State ── */
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
   const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
+  const [autoReplyProcessing, setAutoReplyProcessing] = useState(false)
   const [autoReplyConfig, setAutoReplyConfig] = useState({
     apiKey: '',
     endpoint: 'https://api.openai.com/v1/chat/completions',
@@ -235,6 +237,7 @@ export function App(): JSX.Element {
     if (processedReplyKeys.current.has(key)) return
     processedReplyKeys.current.add(key)
 
+    setAutoReplyProcessing(true)
     void (async () => {
       const config = autoReplyConfigRef.current
       if (!config.apiKey) return
@@ -256,6 +259,8 @@ export function App(): JSX.Element {
         }
       } catch (e) {
         console.error('[AutoReply] AI generation failed:', e)
+      } finally {
+        setAutoReplyProcessing(false)
       }
     })()
   }, [autoReplyMessages, autoReplyEnabled])
@@ -387,6 +392,7 @@ export function App(): JSX.Element {
               onClose={() => setActiveRightTool('')}
               enabled={autoReplyEnabled}
               onToggleEnabled={setAutoReplyEnabled}
+              processing={autoReplyProcessing}
               messages={autoReplyMessages}
               onClearMessages={() => setAutoReplyMessages([])}
               config={autoReplyConfig}
@@ -394,7 +400,7 @@ export function App(): JSX.Element {
               onSendReply={(partition, content) => void window.pingChat.sendReply(partition, content)}
             />
           )}
-          <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} />
+          <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} autoReplyProcessing={autoReplyProcessing} />
         </div>
       </div>
     </TooltipPrimitive.Provider>
@@ -1270,6 +1276,7 @@ function AutoReplyPanel({
   onClose,
   enabled,
   onToggleEnabled,
+  processing,
   messages,
   onClearMessages,
   config,
@@ -1280,6 +1287,7 @@ function AutoReplyPanel({
   onClose?: () => void
   enabled: boolean
   onToggleEnabled: (v: boolean) => void
+  processing: boolean
   messages: ChatMessage[]
   onClearMessages: () => void
   config: { apiKey: string; endpoint: string; model: string; systemPrompt: string }
@@ -1401,7 +1409,10 @@ function AutoReplyPanel({
       <div className="translation-body proxy-body" ref={bodyRef}>
         <h3 className="proxy-section-title" id="reply-overview-section">状态概览</h3>
         <ProxyField label="自动回复">
-          <Switch enabled={enabled} onChange={onToggleEnabled} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Switch enabled={enabled} onChange={onToggleEnabled} />
+            {enabled && processing && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#4c7cff' }} />}
+          </div>
         </ProxyField>
         <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
 
@@ -1492,10 +1503,12 @@ function RightToolBar({
   activeTool,
   onSelectTool,
   disabled = false,
+  autoReplyProcessing = false,
 }: {
   activeTool: string
   onSelectTool: (id: string) => void
   disabled?: boolean
+  autoReplyProcessing?: boolean
 }): JSX.Element {
   const handleClick = (id: string) => {
     if (disabled) return
@@ -1507,7 +1520,7 @@ function RightToolBar({
   }
   const topTools = [
     { id: 'environment', label: '代理环境', icon: <Server size={18} /> },
-    { id: 'reply', label: '自动回复', icon: <MessagesSquare size={18} /> }
+    { id: 'reply', label: '自动回复', icon: autoReplyProcessing ? <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#4c7cff' }} /> : <MessagesSquare size={18} /> }
   ]
 
   const bottomTools = [
