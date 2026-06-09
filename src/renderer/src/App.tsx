@@ -8,14 +8,12 @@ import {
   Facebook,
   FileImage,
   Globe2,
-  Grid2X2,
   Headphones,
   Image,
   Instagram,
   Languages,
   Linkedin,
   Lock,
-  Maximize2,
   MessageCircle,
   MessagesSquare,
   PanelLeft,
@@ -30,7 +28,6 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  Smartphone,
   Sparkles,
   X,
   Zap,
@@ -82,8 +79,52 @@ type ChatSession = {
 const WECHAT_WEB_URL = 'https://web.wechat.com/'
 const XIAOHONGSHU_WEB_URL = 'https://sxt.xiaohongshu.com/im/login'
 
+const BROWSER_VERSIONS = [
+  'Chrome 135', 'Chrome 134', 'Chrome 133', 'Chrome 132', 'Chrome 131', 'Chrome 130',
+  'Chrome 129', 'Chrome 128', 'Chrome 127', 'Chrome 126', 'Chrome 125', 'Chrome 124',
+  'Chrome 123', 'Chrome 122', 'Chrome 121', 'Chrome 120',
+  'Firefox 135', 'Firefox 134', 'Firefox 133', 'Firefox 132', 'Firefox 131', 'Firefox 130',
+  'Firefox 129', 'Firefox 128', 'Firefox 127', 'Firefox 126', 'Firefox 125', 'Firefox 124',
+  'Safari 18.3', 'Safari 18.2', 'Safari 18.1', 'Safari 18.0',
+  'Safari 17.6', 'Safari 17.5', 'Safari 17.4', 'Safari 17.3', 'Safari 17.2', 'Safari 17.1', 'Safari 17.0', 'Safari 16.6',
+  'Edge 135', 'Edge 134', 'Edge 133', 'Edge 132', 'Edge 131', 'Edge 130',
+  'Edge 129', 'Edge 128', 'Edge 127', 'Edge 126', 'Edge 125', 'Edge 124',
+  'Edge 123', 'Edge 122', 'Edge 121', 'Edge 120',
+]
+
+function getUserAgentForVersion(os: string, version: string): string {
+  const [type, verStr] = version.split(' ')
+  const ver = verStr ?? ''
+
+  if (type === 'Firefox') {
+    if (os === 'MacOS') {
+      return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:${ver}.0) Gecko/20100101 Firefox/${ver}.0`
+    }
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${ver}.0) Gecko/20100101 Firefox/${ver}.0`
+  }
+
+  if (type === 'Safari') {
+    if (os === 'MacOS') {
+      return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver} Safari/605.1.15`
+    }
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver} Safari/605.1.15`
+  }
+
+  if (type === 'Edge') {
+    if (os === 'MacOS') {
+      return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver}.0.0.0 Safari/537.36 Edg/${ver}.0.0.0`
+    }
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver}.0.0.0 Safari/537.36 Edg/${ver}.0.0.0`
+  }
+
+  // Chrome
+  if (os === 'MacOS') {
+    return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver}.0.0.0 Safari/537.36`
+  }
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver}.0.0.0 Safari/537.36`
+}
+
 function generateRandomFingerprint(): FingerprintSettings {
-  const browserVersions = ['Chrome 120', 'Chrome 121', 'Chrome 122', 'Chrome 123', 'Chrome 124', 'Chrome 125', 'Chrome 126', 'Chrome 127', 'Chrome 128', 'Chrome 129', 'Chrome 130', 'Chrome 131', 'Chrome 132', 'Chrome 133', 'Chrome 134', 'Chrome 135']
   const osOptions = ['Windows', 'MacOS']
   const resolutionPresets = ['跟随系统', '1920x1080', '1366x768', '1440x900', '1536x864', '1280x720', '2560x1440', '3840x2160']
   const webrtcOptions = ['替换', '允许', '禁用']
@@ -93,49 +134,8 @@ function generateRandomFingerprint(): FingerprintSettings {
   const timezoneOptions = ['跟随系统', 'Asia/Shanghai', 'Asia/Tokyo', 'America/New_York', 'Europe/London', 'UTC']
 
   const selectedOs = osOptions[Math.floor(Math.random() * osOptions.length)]
-  const selectedBrowser = browserVersions[Math.floor(Math.random() * browserVersions.length)]
-  
-  const userAgents: Record<string, string[]> = {
-    'Windows': [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
-    ],
-    'MacOS': [
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
-    ]
-  }
-
-  const osUserAgents = userAgents[selectedOs]
-  const selectedUserAgent = osUserAgents[Math.floor(Math.random() * osUserAgents.length)]
+  const selectedBrowser = BROWSER_VERSIONS[Math.floor(Math.random() * BROWSER_VERSIONS.length)]
+  const selectedUserAgent = getUserAgentForVersion(selectedOs, selectedBrowser)
 
   return {
     browserVersion: selectedBrowser,
@@ -177,23 +177,13 @@ function XhsIcon(): JSX.Element {
   return <span className="text-icon xhs">红</span>
 }
 
-const DEFAULT_SESSION: ChatSession = {
-  id: 'xiaohongshu-demo',
-  platformId: 'xiaohongshu',
-  name: '小红书 1',
-  status: 'login',
-  partition: 'persist:xiaohongshu-demo',
-  fingerprint: generateRandomFingerprint(),
-  proxy: { protocol: 'no-proxy', host: '', port: '', username: '', password: '' }
-}
-
 const timezoneOptions = ['跟随系统', 'Asia/Shanghai', 'Asia/Tokyo', 'America/New_York', 'Europe/London', 'UTC']
 
 export function App(): JSX.Element {
   const [activePlatformId, setActivePlatformId] = useState('xiaohongshu')
-  const [activeRightTool, setActiveRightTool] = useState('environment')
-  const [sessions, setSessions] = useState<ChatSession[]>([DEFAULT_SESSION])
-  const [activeSessionId, setActiveSessionId] = useState('xiaohongshu-demo')
+  const [activeRightTool, setActiveRightTool] = useState('')
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState('')
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
@@ -226,6 +216,12 @@ export function App(): JSX.Element {
     () => sessions.find((session) => session.id === activeSessionId),
     [activeSessionId, sessions]
   )
+
+  useEffect(() => {
+    if (!activeSession) {
+      setActiveRightTool('')
+    }
+  }, [activeSession])
 
   const visibleSessions = useMemo(
     () => sessions.filter((session) => session.platformId === activePlatformId),
@@ -279,11 +275,14 @@ export function App(): JSX.Element {
     )
   }
 
+  const onlineCount = sessions.filter((s) => s.status === 'online').length
+  const offlineCount = sessions.length - onlineCount
+
   return (
     <TooltipPrimitive.Provider delayDuration={0}>
       <div className="app-shell">
-        <TitleBar />
-        <div className="workspace">
+        <TitleBar onlineCount={onlineCount} offlineCount={offlineCount} />
+        <div className={`workspace ${activeRightTool !== 'environment' ? 'no-proxy-panel' : ''}`}>
           <PlatformSidebar activePlatformId={activePlatformId} onSelectPlatform={selectPlatform} />
           <ConversationSidebar
             platform={activePlatform}
@@ -294,15 +293,22 @@ export function App(): JSX.Element {
             onCloseSession={closeSession}
           />
           <MainPanel session={activeSession} platform={activePlatform} />
-          {activeRightTool === 'environment' && <ProxyEnvironmentPanel session={activeSession} onUpdateFingerprint={updateSessionFingerprint} onUpdateProxy={updateSessionProxy} />}
-          <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} />
+          {activeRightTool === 'environment' && (
+            <ProxyEnvironmentPanel
+              session={activeSession}
+              onUpdateFingerprint={updateSessionFingerprint}
+              onUpdateProxy={updateSessionProxy}
+              onClose={() => setActiveRightTool('')}
+            />
+          )}
+          <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} />
         </div>
       </div>
     </TooltipPrimitive.Provider>
   )
 }
 
-function TitleBar(): JSX.Element {
+function TitleBar({ onlineCount, offlineCount }: { onlineCount: number; offlineCount: number }): JSX.Element {
   return (
     <header className="title-bar">
       <div className="traffic-lights">
@@ -312,8 +318,8 @@ function TitleBar(): JSX.Element {
       </div>
       <div className="brand-block">
         <span className="brand-name">PingChat 0.2.0</span>
-        <span>在线: <b className="green">1</b></span>
-        <span>离线: <b className="red">0</b></span>
+        <span>在线: <b className="green">{onlineCount}</b></span>
+        <span>离线: <b className="red">{offlineCount}</b></span>
         <span className="route-pill">全球专线 <b>409ms</b></span>
         <button className="tiny-icon"><RefreshCw size={12} /></button>
       </div>
@@ -412,11 +418,6 @@ function ConversationSidebar({
           ))
         )}
       </section>
-      <section className="conversation-bottom">
-        <button className="mobile-chat"><Smartphone size={14} />全屏手机群聊</button>
-        <button className="corner-icon"><Grid2X2 size={14} /></button>
-        <button className="corner-icon"><Maximize2 size={14} /></button>
-      </section>
       <div className="platform-meta">
         <ShieldCheck size={13} />
         <span>当前平台</span>
@@ -454,7 +455,6 @@ function SessionCard({
       <div className="session-content">
         <div className="session-title-row">
           <strong>{session.name}</strong>
-          <span className={`session-state ${session.status}`}>{session.status === 'login' ? '待登录' : '在线'}</span>
         </div>
         <div className="session-actions-row">
           <span><MessageCircle size={12} />网页会话</span>
@@ -505,8 +505,9 @@ function MainPanel({ session, platform }: { session?: ChatSession; platform: Pla
         </div>
       ) : (
         <div className="empty-state">
-          <Zap size={76} strokeWidth={1.7} />
-          <span>未打开会话</span>
+          <Zap size={48} strokeWidth={1.5} />
+          <span>暂无会话</span>
+          <span style={{ fontSize: 12, marginTop: 4, opacity: 0.5 }}>点击左侧「创建会话」开始</span>
         </div>
       )}
     </main>
@@ -628,10 +629,12 @@ function ProxyEnvironmentPanel({
   session,
   onUpdateFingerprint,
   onUpdateProxy,
+  onClose,
 }: {
   session?: ChatSession
   onUpdateFingerprint?: (sessionId: string, fingerprint: FingerprintSettings) => void
   onUpdateProxy?: (sessionId: string, proxy: ProxyConfig) => void
+  onClose?: () => void
 }): JSX.Element {
   const proxyBodyRef = useRef<HTMLDivElement>(null)
   const proxyTabsRef = useRef<HTMLDivElement>(null)
@@ -700,31 +703,41 @@ function ProxyEnvironmentPanel({
         <div className="translation-title">
           <span>代理环境</span>
         </div>
-        <button className="translation-menu"><SlidersHorizontal size={14} /></button>
+        <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
       </div>
 
-      <div className="proxy-tabs" ref={proxyTabsRef}>
-        <button className={activeTab === 'proxy' ? 'active' : ''} onClick={() => handleScrollTo('proxy-section')}>代理设置</button>
-        <button className={activeTab === 'fingerprint' ? 'active' : ''} onClick={() => handleScrollTo('fingerprint-section')}>指纹设置</button>
-        <button className={activeTab === 'cookie' ? 'active' : ''} onClick={() => handleScrollTo('cookie-section')}>Cookie</button>
-        <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
-      </div>
+      {!session ? (
+        <div className="empty-state" style={{ padding: '48px 20px', opacity: 0.7 }}>
+          <Zap size={48} strokeWidth={1.5} />
+          <span>暂无会话</span>
+          <span style={{ fontSize: 12, marginTop: 4 }}>点击左侧「创建会话」开始</span>
+        </div>
+      ) : (
+        <>
+          <div className="proxy-tabs" ref={proxyTabsRef}>
+            <button className={activeTab === 'proxy' ? 'active' : ''} onClick={() => handleScrollTo('proxy-section')}>代理设置</button>
+            <button className={activeTab === 'fingerprint' ? 'active' : ''} onClick={() => handleScrollTo('fingerprint-section')}>指纹设置</button>
+            <button className={activeTab === 'cookie' ? 'active' : ''} onClick={() => handleScrollTo('cookie-section')}>Cookie</button>
+            <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
+          </div>
 
-      <div className="translation-body proxy-body" ref={proxyBodyRef}>
-        <ProxySettingsTab
-          fingerprint={draftFingerprint}
-          proxy={draftProxy}
-          cookieText={draftCookie}
-          onChangeFingerprint={setDraftFingerprint}
-          onChangeProxy={setDraftProxy}
-          onChangeCookie={setDraftCookie}
-        />
-      </div>
+          <div className="translation-body proxy-body" ref={proxyBodyRef}>
+            <ProxySettingsTab
+              fingerprint={draftFingerprint}
+              proxy={draftProxy}
+              cookieText={draftCookie}
+              onChangeFingerprint={setDraftFingerprint}
+              onChangeProxy={setDraftProxy}
+              onChangeCookie={setDraftCookie}
+            />
+          </div>
 
-      <div className="proxy-footer">
-        <button className="secondary-action wide" onClick={handleGenerateRandom}>一键生成随机指纹</button>
-        <button className="apply-action" onClick={() => void handleApply()}>应用</button>
-      </div>
+          <div className="proxy-footer">
+            <button className="secondary-action wide" onClick={handleGenerateRandom}>一键生成随机指纹</button>
+            <button className="apply-action" onClick={() => void handleApply()}>应用</button>
+          </div>
+        </>
+      )}
     </aside>
   )
 }
@@ -743,6 +756,9 @@ function CustomSelect({
   onChange?: (value: string) => void
 }): JSX.Element {
   const [selected, setSelected] = useState(value ?? '')
+  useEffect(() => {
+    setSelected(value ?? '')
+  }, [value])
   const handleValueChange = (val: string): void => {
     setSelected(val)
     onChange?.(val)
@@ -810,8 +826,8 @@ function ProxySettingsTab({
     )
   }
 
-  const handleFp = (key: keyof FingerprintSettings, value: any) => {
-    onChangeFingerprint?.({ ...fingerprint, [key]: value })
+  const handleFp = (updates: Partial<FingerprintSettings>) => {
+    onChangeFingerprint?.({ ...fingerprint, ...updates })
   }
 
   const handleProxy = (key: keyof ProxyConfig, value: string) => {
@@ -901,25 +917,36 @@ function ProxySettingsTab({
       <ProxyField label="浏览器版本">
         <CustomSelect
           className="proxy-select"
-          value="random"
+          value={fingerprint.browserVersion}
           options={[
-            { value: 'random', label: '随机版本' }
+            { value: 'random', label: '随机版本' },
+            ...BROWSER_VERSIONS.map((v) => ({ value: v, label: v })),
           ]}
+          onChange={(v) => {
+            if (v === 'random') {
+              const randomFp = generateRandomFingerprint()
+              handleFp({ browserVersion: randomFp.browserVersion, userAgent: randomFp.userAgent })
+            } else {
+              handleFp({ browserVersion: v, userAgent: getUserAgentForVersion(fingerprint.os, v) })
+            }
+          }}
         />
       </ProxyField>
       <ProxyField label="操作系统">
-        <SegmentedControl values={['Windows', 'MacOS']} active={fingerprint.os} onChange={(v) => handleFp('os', v)} />
+        <SegmentedControl values={['Windows', 'MacOS']} active={fingerprint.os} onChange={(v) => {
+          handleFp({ os: v, userAgent: getUserAgentForVersion(v, fingerprint.browserVersion) })
+        }} />
       </ProxyField>
       <div className="proxy-note">建议您使用与本地操作相匹配的User Agent</div>
       <ProxyField label="User Agent" className="proxy-field--top">
         <textarea
           className="proxy-textarea user-agent"
           value={fingerprint.userAgent}
-          onChange={(e) => handleFp('userAgent', e.target.value)}
+          onChange={(e) => handleFp({ userAgent: e.target.value })}
         />
       </ProxyField>
       <ProxyField label="地理位置">
-        <SegmentedControl values={['询问', '允许', '禁用']} active={fingerprint.geolocation} onChange={(v) => handleFp('geolocation', v)} />
+        <SegmentedControl values={['询问', '允许', '禁用']} active={fingerprint.geolocation} onChange={(v) => handleFp({ geolocation: v })} />
       </ProxyField>
       {fingerprint.geolocation === '询问' && (
         <div className="proxy-note">网站会显示获取您当前位置的询问提示，您可以允许或禁止，与普通浏览器的提示一样</div>
@@ -944,11 +971,11 @@ function ProxySettingsTab({
             { value: '2560x1440', label: '2560 x 1440' },
             { value: '3840x2160', label: '3840 x 2160' },
           ]}
-          onChange={(v) => handleFp('resolution', v)}
+          onChange={(v) => handleFp({ resolution: v })}
         />
       </ProxyField>
       <ProxyField label="WebRTC">
-        <SegmentedControl values={['替换', '允许', '禁用']} active={fingerprint.webrtc} onChange={(v) => handleFp('webrtc', v)} />
+        <SegmentedControl values={['替换', '允许', '禁用']} active={fingerprint.webrtc} onChange={(v) => handleFp({ webrtc: v })} />
       </ProxyField>
       {fingerprint.webrtc === '替换' && (
         <div className="proxy-note">开启WebRTC，将公网IP替换为代理IP</div>
@@ -960,11 +987,11 @@ function ProxySettingsTab({
         <div className="proxy-note">WebRTC被关闭，网站会检测到您关闭了WebRTC</div>
       )}
       <ProxyField label="Canvas">
-        <Switch enabled={fingerprint.canvas} onChange={(v) => handleFp('canvas', v)} />
+        <Switch enabled={fingerprint.canvas} onChange={(v) => handleFp({ canvas: v })} />
       </ProxyField>
       <div className="proxy-note">启用噪音，掩盖真实Canvas</div>
       <ProxyField label="AudioContext">
-        <Switch enabled={fingerprint.audioContext} onChange={(v) => handleFp('audioContext', v)} />
+        <Switch enabled={fingerprint.audioContext} onChange={(v) => handleFp({ audioContext: v })} />
       </ProxyField>
       <div className="proxy-note">启用噪音，掩盖真实AudioContext</div>
       <ProxyField label="硬件并发数">
@@ -982,7 +1009,7 @@ function ProxySettingsTab({
             { value: '24核', label: '24核' },
             { value: '32核', label: '32核' },
           ]}
-          onChange={(v) => handleFp('hardwareConcurrency', v)}
+          onChange={(v) => handleFp({ hardwareConcurrency: v })}
         />
       </ProxyField>
       <div className="proxy-note">设置当前浏览器环境的CPU核心数</div>
@@ -1000,7 +1027,7 @@ function ProxySettingsTab({
             { value: '64GB', label: '64GB' },
             { value: '128GB', label: '128GB' },
           ]}
-          onChange={(v) => handleFp('deviceMemory', v)}
+          onChange={(v) => handleFp({ deviceMemory: v })}
         />
       </ProxyField>
       <div className="proxy-note">设置当前浏览器环境模拟机器内存</div>
@@ -1009,7 +1036,7 @@ function ProxySettingsTab({
           className="proxy-select"
           value={fingerprint.timezone}
           options={timezoneOptions.map((tz) => ({ value: tz, label: tz }))}
-          onChange={(v) => handleFp('timezone', v)}
+          onChange={(v) => handleFp({ timezone: v })}
         />
       </ProxyField>
       <div className="proxy-note">设置浏览器环境时区</div>
@@ -1122,14 +1149,24 @@ function SegmentedControl({ values, active, onChange }: { values: string[]; acti
 
 function RightToolBar({
   activeTool,
-  onSelectTool
+  onSelectTool,
+  disabled = false,
 }: {
   activeTool: string
   onSelectTool: (id: string) => void
+  disabled?: boolean
 }): JSX.Element {
+  const handleClick = (id: string) => {
+    if (disabled) return
+    if (activeTool === id) {
+      onSelectTool('')
+    } else {
+      onSelectTool(id)
+    }
+  }
   const topTools = [
     { id: 'environment', label: '代理环境', icon: <Server size={18} /> },
-    { id: 'reply', label: '快捷回复', icon: <MessagesSquare size={18} /> }
+    { id: 'reply', label: '自动回复', icon: <MessagesSquare size={18} /> }
   ]
 
   const bottomTools = [
@@ -1142,8 +1179,8 @@ function RightToolBar({
         {topTools.map((tool) => (
           <button
             key={tool.id}
-            className={`right-tool ${activeTool === tool.id ? 'active' : ''}`}
-            onClick={() => onSelectTool(tool.id)}
+            className={`right-tool ${activeTool === tool.id ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+            onClick={() => handleClick(tool.id)}
           >
             {tool.icon}
             <span>{tool.label}</span>
@@ -1155,7 +1192,7 @@ function RightToolBar({
           <button
             key={tool.id}
             className={`right-tool ${activeTool === tool.id ? 'active' : ''}`}
-            onClick={() => onSelectTool(tool.id)}
+            onClick={() => handleClick(tool.id)}
           >
             {tool.icon}
             <span>{tool.label}</span>
