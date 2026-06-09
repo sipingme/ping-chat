@@ -13,6 +13,10 @@ interface Window {
     setCookies: (partition: string, cookieText: string) => Promise<boolean>
     loadSessions: () => Promise<any[]>
     saveSessions: (sessions: any[]) => Promise<boolean>
+    sendReply: (partition: string, content: string) => Promise<boolean>
+    onChatMessage: (
+      callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => void
+    ) => () => void
   }
 }
 

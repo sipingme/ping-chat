@@ -62,6 +62,14 @@ type FingerprintSettings = {
   fakeOuterSize: boolean
 }
 
+type ChatMessage = {
+  partition: string
+  sender: string
+  content: string
+  isFromUser: boolean
+  timestamp: number
+}
+
 type ProxyConfig = {
   protocol: 'no-proxy' | 'http' | 'https' | 'socks5'
   host: string
@@ -195,6 +203,63 @@ export function App(): JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [webviewReloadKey, setWebviewReloadKey] = useState(0)
 
+  /* ── Auto Reply State ── */
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
+  const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
+  const [autoReplyConfig, setAutoReplyConfig] = useState({
+    apiKey: '',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    systemPrompt: '你是一个友好的客服助手，请用简短的中文回复用户。',
+  })
+
+  useEffect(() => {
+    const unsub = window.pingChat.onChatMessage((payload) => {
+      setAutoReplyMessages((prev) => [...prev, payload])
+    })
+    return unsub
+  }, [])
+
+  // Auto-reply: generate AI reply when new user message arrives
+  const autoReplyConfigRef = useRef(autoReplyConfig)
+  autoReplyConfigRef.current = autoReplyConfig
+  const autoReplyEnabledRef = useRef(autoReplyEnabled)
+  autoReplyEnabledRef.current = autoReplyEnabled
+  const processedReplyKeys = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!autoReplyEnabled) return
+    const lastMsg = autoReplyMessages[autoReplyMessages.length - 1]
+    if (!lastMsg || !lastMsg.isFromUser) return
+    const key = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
+    if (processedReplyKeys.current.has(key)) return
+    processedReplyKeys.current.add(key)
+
+    void (async () => {
+      const config = autoReplyConfigRef.current
+      if (!config.apiKey) return
+      const history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
+      const msgs = [
+        { role: 'system', content: config.systemPrompt },
+        ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
+      ]
+      try {
+        const res = await fetch(config.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+          body: JSON.stringify({ model: config.model, messages: msgs, temperature: 0.7 }),
+        })
+        const data = await res.json()
+        const reply = data.choices?.[0]?.message?.content
+        if (reply) {
+          await window.pingChat.sendReply(lastMsg.partition, reply)
+        }
+      } catch (e) {
+        console.error('[AutoReply] AI generation failed:', e)
+      }
+    })()
+  }, [autoReplyMessages, autoReplyEnabled])
+
   useEffect(() => {
     void (async () => {
       try {
@@ -296,7 +361,7 @@ export function App(): JSX.Element {
     <TooltipPrimitive.Provider delayDuration={0}>
       <div className="app-shell">
         <TitleBar onlineCount={onlineCount} offlineCount={offlineCount} />
-        <div className={`workspace ${activeRightTool !== 'environment' ? 'no-proxy-panel' : ''}`}>
+        <div className={`workspace ${activeRightTool === 'environment' || activeRightTool === 'reply' ? '' : 'no-proxy-panel'}`}>
           <PlatformSidebar activePlatformId={activePlatformId} onSelectPlatform={selectPlatform} />
           <ConversationSidebar
             platform={activePlatform}
@@ -314,6 +379,19 @@ export function App(): JSX.Element {
               onUpdateFingerprint={updateSessionFingerprint}
               onUpdateProxy={updateSessionProxy}
               onClose={() => setActiveRightTool('')}
+            />
+          )}
+          {activeRightTool === 'reply' && (
+            <AutoReplyPanel
+              session={activeSession}
+              onClose={() => setActiveRightTool('')}
+              enabled={autoReplyEnabled}
+              onToggleEnabled={setAutoReplyEnabled}
+              messages={autoReplyMessages}
+              onClearMessages={() => setAutoReplyMessages([])}
+              config={autoReplyConfig}
+              onUpdateConfig={(updates) => setAutoReplyConfig((prev) => ({ ...prev, ...updates }))}
+              onSendReply={(partition, content) => void window.pingChat.sendReply(partition, content)}
             />
           )}
           <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} />
@@ -1184,6 +1262,145 @@ function SegmentedControl({ values, active, onChange }: { values: string[]; acti
         <button key={value} className={value === active ? 'active' : ''} onClick={() => onChange?.(value)}>{value}</button>
       ))}
     </div>
+  )
+}
+
+function AutoReplyPanel({
+  session,
+  onClose,
+  enabled,
+  onToggleEnabled,
+  messages,
+  onClearMessages,
+  config,
+  onUpdateConfig,
+  onSendReply,
+}: {
+  session?: ChatSession
+  onClose?: () => void
+  enabled: boolean
+  onToggleEnabled: (v: boolean) => void
+  messages: ChatMessage[]
+  onClearMessages: () => void
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string }
+  onUpdateConfig: (updates: Partial<typeof config>) => void
+  onSendReply: (partition: string, content: string) => void
+}): JSX.Element {
+  const [generating, setGenerating] = useState(false)
+  const [manualReply, setManualReply] = useState('')
+  const [replyTarget, setReplyTarget] = useState('')
+
+  const grouped = useMemo(() => {
+    const map: Record<string, ChatMessage[]> = {}
+    messages.forEach((m) => {
+      if (!map[m.sender]) map[m.sender] = []
+      map[m.sender].push(m)
+    })
+    return map
+  }, [messages])
+
+  const senders = Object.keys(grouped)
+
+  const handleGenerate = async (targetSender: string) => {
+    if (!config.apiKey || generating) return
+    setGenerating(true)
+    try {
+      const history = grouped[targetSender] || []
+      const msgs = [
+        { role: 'system', content: config.systemPrompt },
+        ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
+      ]
+      const res = await fetch(config.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify({ model: config.model, messages: msgs, temperature: 0.7 }),
+      })
+      const data = await res.json()
+      const reply = data.choices?.[0]?.message?.content
+      if (reply && session) {
+        onSendReply(session.partition, reply)
+      }
+    } catch (e) {
+      console.error('Generate reply failed:', e)
+    }
+    setGenerating(false)
+  }
+
+  const handleManualSend = () => {
+    if (!manualReply.trim() || !session) return
+    onSendReply(session.partition, manualReply.trim())
+    setManualReply('')
+    setReplyTarget('')
+  }
+
+  return (
+    <aside className="translation-panel proxy-panel">
+      <div className="translation-header">
+        <div className="translation-title"><span>自动回复</span></div>
+        <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
+      </div>
+      <div className="translation-body proxy-body">
+        <ProxyField label="自动回复">
+          <Switch enabled={enabled} onChange={onToggleEnabled} />
+        </ProxyField>
+        <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
+
+        <h3 className="proxy-section-title">AI 配置</h3>
+        <ProxyField label="API Key" className="proxy-field--top">
+          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
+        </ProxyField>
+        <ProxyField label="Endpoint">
+          <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
+        </ProxyField>
+        <ProxyField label="模型">
+          <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
+        </ProxyField>
+        <ProxyField label="System Prompt" className="proxy-field--top">
+          <textarea className="proxy-textarea" rows={3} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
+        </ProxyField>
+
+        <h3 className="proxy-section-title">消息监控</h3>
+        <div className="proxy-note" style={{ marginBottom: 8 }}>已捕获 {messages.length} 条消息，来自 {senders.length} 个用户</div>
+        {senders.length > 0 && (
+          <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
+        )}
+
+        {senders.map((sender) => {
+          const msgs = grouped[sender]
+          const last = msgs[msgs.length - 1]
+          return (
+            <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
+                <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
+              </div>
+              <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {last.content}
+              </div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
+                  {generating ? '生成中…' : 'AI 回复'}
+                </button>
+                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => setReplyTarget(sender)}>
+                  手动回复
+                </button>
+              </div>
+            </div>
+          )
+        })}
+
+        {replyTarget && (
+          <div style={{ marginTop: 8 }}>
+            <div className="proxy-note">正在回复: {replyTarget}</div>
+            <textarea className="proxy-textarea" rows={2} placeholder="输入回复内容…" value={manualReply} onChange={(e) => setManualReply(e.target.value)} />
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button className="apply-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={handleManualSend}>发送</button>
+              <button className="secondary-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={() => setReplyTarget('')}>取消</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
   )
 }
 

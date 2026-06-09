@@ -192,6 +192,30 @@ app.whenReady().then(() => {
     return true
   })
 
+  /* ── Auto Reply IPC relay ── */
+  const webviewRegistry = new Map<string, number>() // partition -> webContentsId
+
+  ipcMain.handle('chat:register', (event, partition: string) => {
+    webviewRegistry.set(partition, event.sender.id)
+  })
+
+  ipcMain.on('chat:message', (event, payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => {
+    // Forward to main renderer window
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('chat:message', payload)
+    }
+  })
+
+  ipcMain.handle('chat:reply', (_event, partition: string, content: string) => {
+    const webContentsId = webviewRegistry.get(partition)
+    if (!webContentsId) return false
+    const target = require('electron').webContents.fromId(webContentsId)
+    if (!target) return false
+    target.send('chat:reply', { partition, content })
+    return true
+  })
+
   createWindow()
 
   app.on('activate', () => {

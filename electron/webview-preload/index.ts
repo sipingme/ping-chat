@@ -761,9 +761,115 @@ async function init() {
     injectHistory()
     isolateStorage(partition)
     injectDoNotTrack()
+    startAutoReplyScraper(partition)
   } catch (e) {
     console.error('[FingerprintPreload] init error:', e)
   }
+}
+
+/* ── Auto Reply: message scraper + injector ─────────── */
+interface ChatMessagePayload {
+  partition: string
+  sender: string
+  content: string
+  isFromUser: boolean
+  timestamp: number
+}
+
+function startAutoReplyScraper(partition: string) {
+  if (!partition) return
+
+  // Register this webview with main process
+  ipcRenderer.invoke('chat:register', partition)
+
+  const seen = new Set<string>()
+
+  function extractMessages(): ChatMessagePayload[] {
+    const msgs: ChatMessagePayload[] = []
+    // TODO: adjust selectors for xiaohongshu/wechat web IM DOM
+    const msgEls = document.querySelectorAll(
+      '[class*="message"], [class*="msg"], .chat-item, .message-item, .im-message'
+    )
+    msgEls.forEach((el) => {
+      const text = (el.querySelector('[class*="content"], [class*="text"], .msg-content, .message-text') as HTMLElement)?.innerText?.trim()
+      if (!text) return
+      const name = (el.querySelector('[class*="name"], [class*="nickname"], .sender-name') as HTMLElement)?.innerText?.trim() || '对方'
+      // Heuristic: if element is on right side or has 'self'/'me' class, it's from us
+      const isSelf =
+        el.classList.toString().includes('self') ||
+        el.classList.toString().includes('me') ||
+        el.classList.toString().includes('right') ||
+        (el as HTMLElement).style.alignSelf === 'flex-end' ||
+        (el as HTMLElement).style.textAlign === 'right'
+      const key = `${name}:${text}`
+      if (seen.has(key)) return
+      seen.add(key)
+      msgs.push({
+        partition,
+        sender: isSelf ? '我' : name,
+        content: text,
+        isFromUser: !isSelf,
+        timestamp: Date.now(),
+      })
+    })
+    return msgs
+  }
+
+  // Initial scrape after page settles
+  setTimeout(() => {
+    extractMessages().forEach((m) => {
+      if (m.isFromUser) ipcRenderer.send('chat:message', m)
+    })
+  }, 3000)
+
+  // Observe for new messages
+  const observer = new MutationObserver((mutations) => {
+    let hasNew = false
+    for (const mut of mutations) {
+      if (mut.type === 'childList' && mut.addedNodes.length > 0) {
+        hasNew = true
+        break
+      }
+    }
+    if (!hasNew) return
+    const newMsgs = extractMessages().filter((m) => m.isFromUser)
+    newMsgs.forEach((m) => ipcRenderer.send('chat:message', m))
+  })
+
+  const target = document.body
+  observer.observe(target, { childList: true, subtree: true })
+
+  // Listen for reply commands from main/renderer
+  ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string }) => {
+    if (payload.partition !== partition) return
+
+    // Try common input patterns
+    const input =
+      document.querySelector('textarea[placeholder*="输入"], textarea[placeholder*="message"], textarea[placeholder*="reply"], .editor textarea, .chat-input textarea, [contenteditable="true"]') as HTMLElement | null
+
+    if (input) {
+      if (input.tagName === 'TEXTAREA') {
+        ;(input as HTMLTextAreaElement).value = payload.content
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      } else if (input.isContentEditable) {
+        input.innerText = payload.content
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    }
+
+    // Try common send buttons
+    const sendBtn =
+      document.querySelector('button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"], button:has(svg)') as HTMLElement | null
+
+    if (sendBtn) {
+      sendBtn.click()
+    } else if (input && input.tagName === 'TEXTAREA') {
+      // Fallback: trigger Enter key
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+    }
+  })
 }
 
 if (document.readyState === 'loading') {

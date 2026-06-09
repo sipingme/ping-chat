@@ -13,6 +13,12 @@ const api = {
   setCookies: (partition: string, cookieText: string) => ipcRenderer.invoke('cookie:set', partition, cookieText),
   loadSessions: () => ipcRenderer.invoke('sessions:load'),
   saveSessions: (sessions: any[]) => ipcRenderer.invoke('sessions:save', sessions),
+  sendReply: (partition: string, content: string) => ipcRenderer.invoke('chat:reply', partition, content),
+  onChatMessage: (callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('chat:message', handler)
+    return () => ipcRenderer.removeListener('chat:message', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('pingChat', api)
