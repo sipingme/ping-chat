@@ -1467,6 +1467,7 @@ function AutoReplyPanel({
               { value: 'doubao-pro', label: '豆包 Pro' },
               { value: 'moonshot-v1-8k', label: 'Kimi K1' },
               { value: 'glm-4', label: 'GLM-4' },
+              { value: 'abab6', label: 'MiniMax' },
             ]}
             onChange={(val) => onUpdateConfig({ model: val })}
           />
