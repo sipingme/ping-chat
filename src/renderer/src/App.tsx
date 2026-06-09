@@ -212,7 +212,11 @@ export function App(): JSX.Element {
     apiKey: '',
     endpoint: 'https://api.openai.com/v1/chat/completions',
     model: 'abab6',
-    systemPrompt: '你是一个友好的客服助手，请用简短的中文回复用户。',
+    systemPrompt: '你是一个友好的客服助手。',
+    tone: '热情',
+    length: '简短',
+    salutation: '亲',
+    allowEmoji: true,
   })
 
   useEffect(() => {
@@ -228,6 +232,7 @@ export function App(): JSX.Element {
   const autoReplyEnabledRef = useRef(autoReplyEnabled)
   autoReplyEnabledRef.current = autoReplyEnabled
   const processedReplyKeys = useRef(new Set<string>())
+  const [processedCount, setProcessedCount] = useState(0)
 
   useEffect(() => {
     if (!autoReplyEnabled) return
@@ -236,14 +241,41 @@ export function App(): JSX.Element {
     const key = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
     if (processedReplyKeys.current.has(key)) return
     processedReplyKeys.current.add(key)
+    setProcessedCount((c) => c + 1)
 
     setAutoReplyProcessing(true)
     void (async () => {
       const config = autoReplyConfigRef.current
       if (!config.apiKey) return
       const history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
+      const ruleParts: string[] = []
+      const toneMap: Record<string, string> = {
+        热情: '语气要热情活泼',
+        随意: '语气要轻松随意',
+        正式: '语气要正式专业',
+        幽默: '语气要幽默风趣',
+        冷静: '语气要冷静理性',
+        专业: '语气要专业严谨',
+      }
+      if (toneMap[config.tone]) ruleParts.push(toneMap[config.tone])
+      const lenMap: Record<string, string> = {
+        简短: '回复尽量简短，控制在50字以内',
+        适中: '回复长度适中，控制在100字左右',
+        详细: '回复可以详细一些，200字以内',
+      }
+      if (lenMap[config.length]) ruleParts.push(lenMap[config.length])
+      const salMap: Record<string, string> = {
+        您: "称呼用户为'您'",
+        亲: "称呼用户为'亲'",
+        老板: "称呼用户为'老板'",
+        不称呼: '不要加称呼',
+      }
+      if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
+      ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
+      const fullSystem = config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
+
       const msgs = [
-        { role: 'system', content: config.systemPrompt },
+        { role: 'system', content: fullSystem },
         ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
       ]
       try {
@@ -393,6 +425,7 @@ export function App(): JSX.Element {
               enabled={autoReplyEnabled}
               onToggleEnabled={setAutoReplyEnabled}
               processing={autoReplyProcessing}
+              processedCount={processedCount}
               messages={autoReplyMessages}
               onClearMessages={() => setAutoReplyMessages([])}
               config={autoReplyConfig}
@@ -1277,6 +1310,7 @@ function AutoReplyPanel({
   enabled,
   onToggleEnabled,
   processing,
+  processedCount,
   messages,
   onClearMessages,
   config,
@@ -1288,9 +1322,10 @@ function AutoReplyPanel({
   enabled: boolean
   onToggleEnabled: (v: boolean) => void
   processing: boolean
+  processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
 }): JSX.Element {
@@ -1365,8 +1400,34 @@ function AutoReplyPanel({
     setGenerating(true)
     try {
       const history = grouped[targetSender] || []
+      const ruleParts: string[] = []
+      const toneMap: Record<string, string> = {
+        热情: '语气要热情活泼',
+        随意: '语气要轻松随意',
+        正式: '语气要正式专业',
+        幽默: '语气要幽默风趣',
+        冷静: '语气要冷静理性',
+        专业: '语气要专业严谨',
+      }
+      if (toneMap[config.tone]) ruleParts.push(toneMap[config.tone])
+      const lenMap: Record<string, string> = {
+        简短: '回复尽量简短，控制在50字以内',
+        适中: '回复长度适中，控制在100字左右',
+        详细: '回复可以详细一些，200字以内',
+      }
+      if (lenMap[config.length]) ruleParts.push(lenMap[config.length])
+      const salMap: Record<string, string> = {
+        您: "称呼用户为'您'",
+        亲: "称呼用户为'亲'",
+        老板: "称呼用户为'老板'",
+        不称呼: '不要加称呼',
+      }
+      if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
+      ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
+      const fullSystem = config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
+
       const msgs = [
-        { role: 'system', content: config.systemPrompt },
+        { role: 'system', content: fullSystem },
         ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
       ]
       const res = await fetch(config.endpoint, {
@@ -1414,7 +1475,24 @@ function AutoReplyPanel({
         <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
 
         <h3 className="proxy-section-title" id="reply-messages-section">消息监控</h3>
-        <div className="proxy-note" style={{ marginBottom: 8 }}>已捕获 {messages.length} 条消息，来自 {senders.length} 个用户</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次已捕获</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{messages.length}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次已处理</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次未处理</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次用户数</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{senders.length}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+          </div>
+        </div>
         {senders.length > 0 && (
           <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
         )}
@@ -1444,9 +1522,60 @@ function AutoReplyPanel({
 
         <h3 className="proxy-section-title" id="reply-settings-section">回复设置</h3>
         <ProxyField label="系统提示词" className="proxy-field--top">
-          <textarea className="proxy-textarea" rows={5} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
+          <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">定义 AI 助手的角色和回复风格</div>
+        <div className="proxy-note">定义 AI 助手的角色和回复风格，下方规则会自动追加</div>
+
+        <ProxyField label="语气">
+          <CustomSelect
+            placeholder="选择语气"
+            value={config.tone}
+            options={[
+              { value: '热情', label: '热情' },
+              { value: '随意', label: '随意' },
+              { value: '正式', label: '正式' },
+              { value: '幽默', label: '幽默' },
+              { value: '冷静', label: '冷静' },
+              { value: '专业', label: '专业' },
+            ]}
+            onChange={(val) => onUpdateConfig({ tone: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 回复用户的整体语气风格</div>
+
+        <ProxyField label="回复长度">
+          <CustomSelect
+            placeholder="选择长度"
+            value={config.length}
+            options={[
+              { value: '简短', label: '简短（50字内）' },
+              { value: '适中', label: '适中（100字左右）' },
+              { value: '详细', label: '详细（200字内）' },
+            ]}
+            onChange={(val) => onUpdateConfig({ length: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">限制 AI 回复的字数范围</div>
+
+        <ProxyField label="称呼习惯">
+          <CustomSelect
+            placeholder="选择称呼"
+            value={config.salutation}
+            options={[
+              { value: '您', label: '您' },
+              { value: '亲', label: '亲' },
+              { value: '老板', label: '老板' },
+              { value: '不称呼', label: '不称呼' },
+            ]}
+            onChange={(val) => onUpdateConfig({ salutation: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 如何称呼用户</div>
+
+        <ProxyField label="表情符号">
+          <Switch enabled={config.allowEmoji} onChange={(v) => onUpdateConfig({ allowEmoji: v })} />
+        </ProxyField>
+        <div className="proxy-note">允许 AI 在回复中使用表情符号</div>
 
         {replyTarget && (
           <div style={{ marginTop: 12 }}>
