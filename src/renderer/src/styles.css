@@ -788,6 +788,10 @@ button {
   font-weight: 700;
 }
 
+.proxy-section-title {
+  font-size: 16px;
+}
+
 .proxy-section .proxy-section-title + .proxy-field {
   margin-top: 6px;
 }
