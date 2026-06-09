@@ -1014,6 +1014,14 @@ button {
   line-height: 1.35;
 }
 
+.proxy-note--ok {
+  color: #4ade80;
+}
+
+.proxy-note--error {
+  color: #f87171;
+}
+
 .segmented-control {
   display: flex;
   align-items: center;

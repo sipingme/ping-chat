@@ -1,9 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { join } from 'node:path'
 
 const api = {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   maximize: () => ipcRenderer.invoke('window:maximize'),
-  close: () => ipcRenderer.invoke('window:close')
+  close: () => ipcRenderer.invoke('window:close'),
+  webviewPreloadPath: `file://${join(__dirname, '../webview-preload/index.js')}`,
+  setFingerprint: (partition: string, config: any) => ipcRenderer.invoke('fingerprint:set', partition, config),
+  getFingerprint: (partition: string) => ipcRenderer.invoke('fingerprint:get', partition),
+  setProxy: (partition: string, config: any) => ipcRenderer.invoke('proxy:set', partition, config),
+  checkProxy: (config: any) => ipcRenderer.invoke('proxy:check', config),
+  setCookies: (partition: string, cookieText: string) => ipcRenderer.invoke('cookie:set', partition, cookieText),
+  loadSessions: () => ipcRenderer.invoke('sessions:load'),
+  saveSessions: (sessions: any[]) => ipcRenderer.invoke('sessions:save', sessions),
 }
 
 contextBridge.exposeInMainWorld('pingChat', api)

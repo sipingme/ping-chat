@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
   ChevronDown,
@@ -58,6 +58,15 @@ type FingerprintSettings = {
   audioContext: boolean
   hardwareConcurrency: string
   deviceMemory: string
+  timezone: string
+}
+
+type ProxyConfig = {
+  protocol: 'no-proxy' | 'http' | 'https' | 'socks5'
+  host: string
+  port: string
+  username: string
+  password: string
 }
 
 type ChatSession = {
@@ -67,6 +76,7 @@ type ChatSession = {
   status: 'login' | 'online'
   partition: string
   fingerprint: FingerprintSettings
+  proxy: ProxyConfig
 }
 
 const WECHAT_WEB_URL = 'https://web.wechat.com/'
@@ -75,11 +85,12 @@ const XIAOHONGSHU_WEB_URL = 'https://sxt.xiaohongshu.com/im/login'
 function generateRandomFingerprint(): FingerprintSettings {
   const browserVersions = ['Chrome 120', 'Chrome 121', 'Chrome 122', 'Chrome 123', 'Chrome 124', 'Chrome 125', 'Chrome 126', 'Chrome 127', 'Chrome 128', 'Chrome 129', 'Chrome 130', 'Chrome 131', 'Chrome 132', 'Chrome 133', 'Chrome 134', 'Chrome 135']
   const osOptions = ['Windows', 'MacOS']
-  const resolutions = ['跟随系统', '自定义', '随机']
+  const resolutionPresets = ['跟随系统', '1920x1080', '1366x768', '1440x900', '1536x864', '1280x720', '2560x1440', '3840x2160']
   const webrtcOptions = ['替换', '允许', '禁用']
   const geolocationOptions = ['询问', '允许', '禁用']
   const hardwareOptions = ['2核', '4核', '8核', '16核', '32核']
   const memoryOptions = ['2GB', '4GB', '6GB', '8GB', '16GB', '32GB']
+  const timezoneOptions = ['跟随系统', 'Asia/Shanghai', 'Asia/Tokyo', 'America/New_York', 'Europe/London', 'UTC']
 
   const selectedOs = osOptions[Math.floor(Math.random() * osOptions.length)]
   const selectedBrowser = browserVersions[Math.floor(Math.random() * browserVersions.length)]
@@ -131,12 +142,13 @@ function generateRandomFingerprint(): FingerprintSettings {
     os: selectedOs,
     userAgent: selectedUserAgent,
     geolocation: geolocationOptions[Math.floor(Math.random() * geolocationOptions.length)],
-    resolution: resolutions[Math.floor(Math.random() * resolutions.length)],
+    resolution: resolutionPresets[Math.floor(Math.random() * resolutionPresets.length)],
     webrtc: webrtcOptions[Math.floor(Math.random() * webrtcOptions.length)],
     canvas: Math.random() > 0.3,
     audioContext: Math.random() > 0.3,
     hardwareConcurrency: hardwareOptions[Math.floor(Math.random() * hardwareOptions.length)],
-    deviceMemory: memoryOptions[Math.floor(Math.random() * memoryOptions.length)]
+    deviceMemory: memoryOptions[Math.floor(Math.random() * memoryOptions.length)],
+    timezone: timezoneOptions[Math.floor(Math.random() * timezoneOptions.length)]
   }
 }
 
@@ -165,20 +177,45 @@ function XhsIcon(): JSX.Element {
   return <span className="text-icon xhs">红</span>
 }
 
+const DEFAULT_SESSION: ChatSession = {
+  id: 'xiaohongshu-demo',
+  platformId: 'xiaohongshu',
+  name: '小红书 1',
+  status: 'login',
+  partition: 'persist:xiaohongshu-demo',
+  fingerprint: generateRandomFingerprint(),
+  proxy: { protocol: 'no-proxy', host: '', port: '', username: '', password: '' }
+}
+
+const timezoneOptions = ['跟随系统', 'Asia/Shanghai', 'Asia/Tokyo', 'America/New_York', 'Europe/London', 'UTC']
+
 export function App(): JSX.Element {
   const [activePlatformId, setActivePlatformId] = useState('xiaohongshu')
   const [activeRightTool, setActiveRightTool] = useState('environment')
-  const [sessions, setSessions] = useState<ChatSession[]>([
-    {
-      id: 'xiaohongshu-demo',
-      platformId: 'xiaohongshu',
-      name: '小红书 1',
-      status: 'login',
-      partition: 'persist:xiaohongshu-demo',
-      fingerprint: generateRandomFingerprint()
-    }
-  ])
+  const [sessions, setSessions] = useState<ChatSession[]>([DEFAULT_SESSION])
   const [activeSessionId, setActiveSessionId] = useState('xiaohongshu-demo')
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const stored = await window.pingChat.loadSessions()
+        if (stored && stored.length > 0) {
+          setSessions(stored)
+          setActiveSessionId(stored[0].id)
+          setActivePlatformId(stored[0].platformId)
+        }
+      } catch (e) {
+        console.error('[App] load sessions failed:', e)
+      }
+      setLoaded(true)
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!loaded) return
+    void window.pingChat.saveSessions(sessions)
+  }, [sessions, loaded])
 
   const activePlatform = useMemo(
     () => platforms.find((platform) => platform.id === activePlatformId) ?? platforms[0],
@@ -204,7 +241,8 @@ export function App(): JSX.Element {
       name: activePlatformId === 'wechat' ? `微信 ${platformSessionCount + 1}` : `${activePlatform.name} ${platformSessionCount + 1}`,
       status: 'login',
       partition: `persist:${activePlatformId}-${id}`,
-      fingerprint: generateRandomFingerprint()
+      fingerprint: generateRandomFingerprint(),
+      proxy: { protocol: 'no-proxy', host: '', port: '', username: '', password: '' }
     }
     setSessions((current) => [nextSession, ...current])
     setActiveSessionId(id)
@@ -233,6 +271,14 @@ export function App(): JSX.Element {
     )
   }
 
+  const updateSessionProxy = (sessionId: string, proxy: ProxyConfig): void => {
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, proxy } : session
+      )
+    )
+  }
+
   return (
     <TooltipPrimitive.Provider delayDuration={0}>
       <div className="app-shell">
@@ -248,7 +294,7 @@ export function App(): JSX.Element {
             onCloseSession={closeSession}
           />
           <MainPanel session={activeSession} platform={activePlatform} />
-          {activeRightTool === 'environment' && <ProxyEnvironmentPanel session={activeSession} onUpdateFingerprint={updateSessionFingerprint} />}
+          {activeRightTool === 'environment' && <ProxyEnvironmentPanel session={activeSession} onUpdateFingerprint={updateSessionFingerprint} onUpdateProxy={updateSessionProxy} />}
           <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} />
         </div>
       </div>
@@ -433,6 +479,12 @@ function MainPanel({ session, platform }: { session?: ChatSession; platform: Pla
   const hasWebviewPlatform = Boolean(session && (session.platformId === 'wechat' || session.platformId === 'xiaohongshu'))
   const webviewUrl = session?.platformId === 'wechat' ? WECHAT_WEB_URL : XIAOHONGSHU_WEB_URL
 
+  useEffect(() => {
+    if (!session) return
+    void window.pingChat.setFingerprint(session.partition, session.fingerprint)
+    void window.pingChat.setProxy(session.partition, session.proxy)
+  }, [session?.id, session?.fingerprint, session?.proxy])
+
   return (
     <main className={`main-panel ${session ? 'with-webview' : ''}`}>
       {hasWebviewPlatform ? (
@@ -443,6 +495,7 @@ function MainPanel({ session, platform }: { session?: ChatSession; platform: Pla
             src={webviewUrl}
             partition={session?.partition}
             allowpopups="true"
+            preload={window.pingChat?.webviewPreloadPath}
           />
         </div>
       ) : session ? (
@@ -571,12 +624,28 @@ function Switch({ enabled, onChange }: { enabled: boolean; onChange?: (enabled: 
   return <span className={`switch ${enabled ? 'enabled' : ''}`} onClick={() => onChange?.(!enabled)}><i /></span>
 }
 
-function ProxyEnvironmentPanel({ session, onUpdateFingerprint }: { session?: ChatSession; onUpdateFingerprint?: (sessionId: string, fingerprint: FingerprintSettings) => void }): JSX.Element {
+function ProxyEnvironmentPanel({
+  session,
+  onUpdateFingerprint,
+  onUpdateProxy,
+}: {
+  session?: ChatSession
+  onUpdateFingerprint?: (sessionId: string, fingerprint: FingerprintSettings) => void
+  onUpdateProxy?: (sessionId: string, proxy: ProxyConfig) => void
+}): JSX.Element {
   const proxyBodyRef = useRef<HTMLDivElement>(null)
   const proxyTabsRef = useRef<HTMLDivElement>(null)
   const [activeTab, setActiveTab] = useState<'proxy' | 'fingerprint' | 'cookie'>('proxy')
-  const [localFingerprint, setLocalFingerprint] = useState<FingerprintSettings | undefined>(session?.fingerprint)
+  const [draftFingerprint, setDraftFingerprint] = useState<FingerprintSettings | undefined>(session?.fingerprint)
+  const [draftProxy, setDraftProxy] = useState<ProxyConfig | undefined>(session?.proxy)
+  const [draftCookie, setDraftCookie] = useState('')
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
+
+  useEffect(() => {
+    setDraftFingerprint(session?.fingerprint)
+    setDraftProxy(session?.proxy)
+    setDraftCookie('')
+  }, [session?.id])
 
   useLayoutEffect(() => {
     const activeBtn = proxyTabsRef.current?.querySelector('.proxy-tabs button.active')
@@ -602,12 +671,26 @@ function ProxyEnvironmentPanel({ session, onUpdateFingerprint }: { session?: Cha
 
   const handleGenerateRandom = (): void => {
     const newFingerprint = generateRandomFingerprint()
-    setLocalFingerprint(newFingerprint)
+    setDraftFingerprint(newFingerprint)
   }
 
-  const handleApply = (): void => {
-    if (localFingerprint && session && onUpdateFingerprint) {
-      onUpdateFingerprint(session.id, localFingerprint)
+  const handleApply = async (): Promise<void> => {
+    if (!session) return
+    if (draftFingerprint && onUpdateFingerprint) {
+      const fpWithProxy = {
+        ...draftFingerprint,
+        proxyHost: draftProxy?.host,
+        proxyPort: draftProxy?.port,
+      }
+      onUpdateFingerprint(session.id, draftFingerprint)
+      await window.pingChat.setFingerprint(session.partition, fpWithProxy)
+    }
+    if (draftProxy && onUpdateProxy) {
+      onUpdateProxy(session.id, draftProxy)
+      await window.pingChat.setProxy(session.partition, draftProxy)
+    }
+    if (draftCookie.trim()) {
+      await window.pingChat.setCookies(session.partition, draftCookie.trim())
     }
   }
 
@@ -628,12 +711,19 @@ function ProxyEnvironmentPanel({ session, onUpdateFingerprint }: { session?: Cha
       </div>
 
       <div className="translation-body proxy-body" ref={proxyBodyRef}>
-        <ProxySettingsTab />
+        <ProxySettingsTab
+          fingerprint={draftFingerprint}
+          proxy={draftProxy}
+          cookieText={draftCookie}
+          onChangeFingerprint={setDraftFingerprint}
+          onChangeProxy={setDraftProxy}
+          onChangeCookie={setDraftCookie}
+        />
       </div>
 
       <div className="proxy-footer">
         <button className="secondary-action wide" onClick={handleGenerateRandom}>一键生成随机指纹</button>
-        <button className="apply-action" onClick={handleApply}>应用</button>
+        <button className="apply-action" onClick={() => void handleApply()}>应用</button>
       </div>
     </aside>
   )
@@ -694,13 +784,54 @@ function CustomTooltip({ children, content }: { children: ReactNode; content: Re
   )
 }
 
-function ProxySettingsTab(): JSX.Element {
-  const [geolocation, setGeolocation] = useState('询问')
-  const [webrtc, setWebrtc] = useState('替换')
-  const [canvas, setCanvas] = useState(true)
-  const [audioContext, setAudioContext] = useState(true)
-  const [hardwareConcurrency, setHardwareConcurrency] = useState('16核')
-  const [deviceMemory, setDeviceMemory] = useState('8GB')
+function ProxySettingsTab({
+  fingerprint,
+  proxy,
+  cookieText,
+  onChangeFingerprint,
+  onChangeProxy,
+  onChangeCookie,
+}: {
+  fingerprint?: FingerprintSettings
+  proxy?: ProxyConfig
+  cookieText?: string
+  onChangeFingerprint?: (fp: FingerprintSettings) => void
+  onChangeProxy?: (p: ProxyConfig) => void
+  onChangeCookie?: (text: string) => void
+}): JSX.Element {
+  const [checkStatus, setCheckStatus] = useState<{ type: 'idle' | 'checking' | 'ok' | 'error'; message?: string }>({ type: 'idle' })
+
+  if (!fingerprint || !proxy) {
+    return (
+      <section className="proxy-section">
+        <h3>代理环境</h3>
+        <div className="proxy-note">请先选择一个会话</div>
+      </section>
+    )
+  }
+
+  const handleFp = (key: keyof FingerprintSettings, value: any) => {
+    onChangeFingerprint?.({ ...fingerprint, [key]: value })
+  }
+
+  const handleProxy = (key: keyof ProxyConfig, value: string) => {
+    onChangeProxy?.({ ...proxy, [key]: value })
+  }
+
+  const handleCheckProxy = async () => {
+    setCheckStatus({ type: 'checking' })
+    try {
+      const result = await window.pingChat.checkProxy(proxy)
+      if (result.ok && result.ip) {
+        setCheckStatus({ type: 'ok', message: `代理可用 IP:${result.ip} 延迟:${result.latency}ms` })
+      } else {
+        setCheckStatus({ type: 'error', message: result.error || '检查失败' })
+      }
+    } catch (e: any) {
+      setCheckStatus({ type: 'error', message: e.message || '检查失败' })
+    }
+  }
+
   return (
     <section className="proxy-section">
       <h3 className="proxy-section-title" id="proxy-section">代理设置</h3>
@@ -733,30 +864,38 @@ function ProxySettingsTab(): JSX.Element {
       <ProxyField label="协议">
         <CustomSelect
           className="proxy-select"
-          value="no-proxy"
+          value={proxy.protocol}
           options={[
             { value: 'no-proxy', label: 'No Proxy' },
             { value: 'http', label: 'HTTP' },
             { value: 'https', label: 'HTTPS' },
             { value: 'socks5', label: 'SOCKS5' }
           ]}
+          onChange={(v) => handleProxy('protocol', v)}
         />
       </ProxyField>
       <ProxyField label="主机 : 端口">
         <div className="host-port">
-          <input placeholder="主机" />
+          <input placeholder="主机" value={proxy.host} onChange={(e) => handleProxy('host', e.target.value)} />
           <span>:</span>
-          <input placeholder="端口" />
+          <input placeholder="端口" value={proxy.port} onChange={(e) => handleProxy('port', e.target.value)} />
         </div>
       </ProxyField>
       <ProxyField label="用户名">
-        <input className="proxy-input" placeholder="用户名" />
+        <input className="proxy-input" placeholder="用户名" value={proxy.username} onChange={(e) => handleProxy('username', e.target.value)} />
       </ProxyField>
       <ProxyField label="密码">
         <div className="password-check">
-          <input className="proxy-input" type="password" placeholder="密码" />
-          <button className="proxy-check-btn">检查代理服务器</button>
+          <input className="proxy-input" type="password" placeholder="密码" value={proxy.password} onChange={(e) => handleProxy('password', e.target.value)} />
+          <button className="proxy-check-btn" onClick={() => void handleCheckProxy()} disabled={checkStatus.type === 'checking'}>
+            {checkStatus.type === 'checking' ? '检查中…' : '检查代理服务器'}
+          </button>
         </div>
+        {checkStatus.type !== 'idle' && (
+          <div className={`proxy-note ${checkStatus.type === 'ok' ? 'proxy-note--ok' : checkStatus.type === 'error' ? 'proxy-note--error' : ''}`}>
+            {checkStatus.message}
+          </div>
+        )}
       </ProxyField>
       <h3 className="proxy-section-title" id="fingerprint-section">指纹设置</h3>
       <ProxyField label="浏览器版本">
@@ -769,48 +908,69 @@ function ProxySettingsTab(): JSX.Element {
         />
       </ProxyField>
       <ProxyField label="操作系统">
-        <SegmentedControl values={['Windows', 'MacOS']} active="Windows" />
+        <SegmentedControl values={['Windows', 'MacOS']} active={fingerprint.os} onChange={(v) => handleFp('os', v)} />
       </ProxyField>
       <div className="proxy-note">建议您使用与本地操作相匹配的User Agent</div>
       <ProxyField label="User Agent" className="proxy-field--top">
-        <textarea className="proxy-textarea" placeholder="Mozilla/5.0..." />
+        <textarea
+          className="proxy-textarea user-agent"
+          value={fingerprint.userAgent}
+          onChange={(e) => handleFp('userAgent', e.target.value)}
+        />
       </ProxyField>
       <ProxyField label="地理位置">
-        <SegmentedControl values={['询问', '允许', '禁用']} active={geolocation} onChange={setGeolocation} />
+        <SegmentedControl values={['询问', '允许', '禁用']} active={fingerprint.geolocation} onChange={(v) => handleFp('geolocation', v)} />
       </ProxyField>
-      {geolocation === '询问' && (
+      {fingerprint.geolocation === '询问' && (
         <div className="proxy-note">网站会显示获取您当前位置的询问提示，您可以允许或禁止，与普通浏览器的提示一样</div>
       )}
-      {geolocation === '允许' && (
+      {fingerprint.geolocation === '允许' && (
         <div className="proxy-note">网站请求获取您当前位置时，始终被允许</div>
       )}
-      {geolocation === '禁用' && (
+      {fingerprint.geolocation === '禁用' && (
         <div className="proxy-note">网站请求获取您当前位置时，始终被禁止</div>
       )}
-      <ProxyField label="WebRTC">
-        <SegmentedControl values={['替换', '允许', '禁用']} active={webrtc} onChange={setWebrtc} />
+      <ProxyField label="分辨率">
+        <CustomSelect
+          className="proxy-select"
+          value={fingerprint.resolution}
+          options={[
+            { value: '跟随系统', label: '跟随系统' },
+            { value: '1920x1080', label: '1920 x 1080' },
+            { value: '1366x768', label: '1366 x 768' },
+            { value: '1440x900', label: '1440 x 900' },
+            { value: '1536x864', label: '1536 x 864' },
+            { value: '1280x720', label: '1280 x 720' },
+            { value: '2560x1440', label: '2560 x 1440' },
+            { value: '3840x2160', label: '3840 x 2160' },
+          ]}
+          onChange={(v) => handleFp('resolution', v)}
+        />
       </ProxyField>
-      {webrtc === '替换' && (
+      <ProxyField label="WebRTC">
+        <SegmentedControl values={['替换', '允许', '禁用']} active={fingerprint.webrtc} onChange={(v) => handleFp('webrtc', v)} />
+      </ProxyField>
+      {fingerprint.webrtc === '替换' && (
         <div className="proxy-note">开启WebRTC，将公网IP替换为代理IP</div>
       )}
-      {webrtc === '允许' && (
+      {fingerprint.webrtc === '允许' && (
         <div className="proxy-note">开启WebRTC，将使用当前电脑的真实IP</div>
       )}
-      {webrtc === '禁用' && (
+      {fingerprint.webrtc === '禁用' && (
         <div className="proxy-note">WebRTC被关闭，网站会检测到您关闭了WebRTC</div>
       )}
       <ProxyField label="Canvas">
-        <Switch enabled={canvas} onChange={setCanvas} />
+        <Switch enabled={fingerprint.canvas} onChange={(v) => handleFp('canvas', v)} />
       </ProxyField>
       <div className="proxy-note">启用噪音，掩盖真实Canvas</div>
       <ProxyField label="AudioContext">
-        <Switch enabled={audioContext} onChange={setAudioContext} />
+        <Switch enabled={fingerprint.audioContext} onChange={(v) => handleFp('audioContext', v)} />
       </ProxyField>
       <div className="proxy-note">启用噪音，掩盖真实AudioContext</div>
       <ProxyField label="硬件并发数">
         <CustomSelect
           className="proxy-select"
-          value={hardwareConcurrency}
+          value={fingerprint.hardwareConcurrency}
           options={[
             { value: '2核', label: '2核' },
             { value: '4核', label: '4核' },
@@ -822,14 +982,14 @@ function ProxySettingsTab(): JSX.Element {
             { value: '24核', label: '24核' },
             { value: '32核', label: '32核' },
           ]}
-          onChange={setHardwareConcurrency}
+          onChange={(v) => handleFp('hardwareConcurrency', v)}
         />
       </ProxyField>
       <div className="proxy-note">设置当前浏览器环境的CPU核心数</div>
       <ProxyField label="设备内存">
         <CustomSelect
           className="proxy-select"
-          value={deviceMemory}
+          value={fingerprint.deviceMemory}
           options={[
             { value: '2GB', label: '2GB' },
             { value: '4GB', label: '4GB' },
@@ -840,15 +1000,29 @@ function ProxySettingsTab(): JSX.Element {
             { value: '64GB', label: '64GB' },
             { value: '128GB', label: '128GB' },
           ]}
-          onChange={setDeviceMemory}
+          onChange={(v) => handleFp('deviceMemory', v)}
         />
       </ProxyField>
       <div className="proxy-note">设置当前浏览器环境模拟机器内存</div>
+      <ProxyField label="时区">
+        <CustomSelect
+          className="proxy-select"
+          value={fingerprint.timezone}
+          options={timezoneOptions.map((tz) => ({ value: tz, label: tz }))}
+          onChange={(v) => handleFp('timezone', v)}
+        />
+      </ProxyField>
+      <div className="proxy-note">设置浏览器环境时区</div>
       <h3 className="proxy-section-title" id="cookie-section">Cookie</h3>
       <ProxyField label="Cookie" className="proxy-field--top">
-        <textarea className="proxy-textarea" placeholder="name=value; name2=value2..." />
+        <textarea
+          className="proxy-textarea"
+          placeholder="name=value; name2=value2..."
+          value={cookieText ?? ''}
+          onChange={(e) => onChangeCookie?.(e.target.value)}
+        />
       </ProxyField>
-      <div className="proxy-note">用于登录会话使用</div>
+      <div className="proxy-note">用于登录会话使用，点击底部应用后生效</div>
     </section>
   )
 }

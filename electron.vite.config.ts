@@ -16,7 +16,10 @@ export default defineConfig({
   preload: {
     build: {
       rollupOptions: {
-        input: resolve(rootDir, 'electron/preload/index.ts')
+        input: {
+          index: resolve(rootDir, 'electron/preload/index.ts'),
+          webview: resolve(rootDir, 'electron/webview-preload/index.ts'),
+        }
       }
     }
   },
