@@ -1395,7 +1395,7 @@ function AutoReplyPanel({
   return (
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
-        <div className="translation-title"><span>自动回复</span></div>
+        <div className="translation-title"><span>自动回复</span>{enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginLeft: 6 }} />}</div>
         <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
       </div>
 
@@ -1409,10 +1409,7 @@ function AutoReplyPanel({
       <div className="translation-body proxy-body" ref={bodyRef}>
         <h3 className="proxy-section-title" id="reply-overview-section">状态概览</h3>
         <ProxyField label="自动回复">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Switch enabled={enabled} onChange={onToggleEnabled} />
-            {enabled && <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#19d973' }} />}
-          </div>
+          <Switch enabled={enabled} onChange={onToggleEnabled} />
         </ProxyField>
         <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
 
