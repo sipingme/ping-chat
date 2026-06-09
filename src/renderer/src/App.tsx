@@ -217,6 +217,8 @@ export function App(): JSX.Element {
     length: '简短',
     salutation: '亲',
     allowEmoji: true,
+    templates: [] as string[],
+    delaySeconds: 0,
   })
 
   useEffect(() => {
@@ -247,6 +249,9 @@ export function App(): JSX.Element {
     void (async () => {
       const config = autoReplyConfigRef.current
       if (!config.apiKey) return
+      if (config.delaySeconds > 0) {
+        await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
+      }
       const history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
       const ruleParts: string[] = []
       const toneMap: Record<string, string> = {
@@ -1325,7 +1330,7 @@ function AutoReplyPanel({
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
 }): JSX.Element {
@@ -1576,6 +1581,82 @@ function AutoReplyPanel({
           <Switch enabled={config.allowEmoji} onChange={(v) => onUpdateConfig({ allowEmoji: v })} />
         </ProxyField>
         <div className="proxy-note">允许 AI 在回复中使用表情符号</div>
+
+        <ProxyField label="延迟回复">
+          <CustomSelect
+            placeholder="选择延迟"
+            value={String(config.delaySeconds)}
+            options={[
+              { value: '0', label: '立即回复' },
+              { value: '2', label: '延迟 2 秒' },
+              { value: '5', label: '延迟 5 秒' },
+              { value: '10', label: '延迟 10 秒' },
+            ]}
+            onChange={(val) => onUpdateConfig({ delaySeconds: Number(val) })}
+          />
+        </ProxyField>
+        <div className="proxy-note">收到消息后延迟一段时间再自动回复</div>
+
+        <ProxyField label="快捷模板" className="proxy-field--top">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                id="template-input"
+                className="proxy-input"
+                placeholder="输入常用回复内容…"
+                style={{ flex: 1 }}
+              />
+              <button
+                className="secondary-action"
+                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                onClick={() => {
+                  const input = document.getElementById('template-input') as HTMLInputElement
+                  const text = input?.value.trim()
+                  if (!text) return
+                  onUpdateConfig({ templates: [...config.templates, text] })
+                  input.value = ''
+                }}
+              >
+                添加
+              </button>
+            </div>
+            {config.templates.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {config.templates.map((t, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      background: '#2c3135',
+                      fontSize: 11,
+                      color: '#a8afb7',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => { setManualReply(t); handleScrollTo('reply-settings-section') }}
+                    title="点击填入手动回复"
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t}</span>
+                    <span
+                      style={{ color: '#8c96a1', fontSize: 12, lineHeight: 1 }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const next = config.templates.filter((_, idx) => idx !== i)
+                        onUpdateConfig({ templates: next })
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </ProxyField>
+        <div className="proxy-note">点击模板可快速填入手动回复框，点 × 删除</div>
 
         {replyTarget && (
           <div style={{ marginTop: 12 }}>
