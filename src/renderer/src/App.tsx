@@ -1452,20 +1452,20 @@ function AutoReplyPanel({
         )}
 
         <h3 className="proxy-section-title" id="reply-model-section">大模型设置</h3>
-        <ProxyField label="API Key" className="proxy-field--top">
-          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
+        <ProxyField label="模型" className="proxy-field--top">
+          <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">大模型服务的 API Key</div>
+        <div className="proxy-note">使用的模型名称</div>
 
         <ProxyField label="Endpoint">
           <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">OpenAI 兼容格式的 API 地址</div>
 
-        <ProxyField label="模型">
-          <input className="proxy-input" placeholder="gpt-4o-mini" value={config.model} onChange={(e) => onUpdateConfig({ model: e.target.value })} />
+        <ProxyField label="API Key">
+          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">使用的模型名称</div>
+        <div className="proxy-note">大模型服务的 API Key</div>
       </div>
     </aside>
   )
