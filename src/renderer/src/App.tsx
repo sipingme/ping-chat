@@ -1411,10 +1411,10 @@ function AutoReplyPanel({
         <ProxyField label="自动回复">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Switch enabled={enabled} onChange={onToggleEnabled} />
-            {enabled && <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent)' }} />}
+            {enabled && <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#19d973' }} />}
           </div>
         </ProxyField>
-        <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
+        <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
 
         <h3 className="proxy-section-title" id="reply-messages-section">消息监控</h3>
         <div className="proxy-note" style={{ marginBottom: 8 }}>已捕获 {messages.length} 条消息，来自 {senders.length} 个用户</div>
@@ -1520,7 +1520,7 @@ function RightToolBar({
   }
   const topTools = [
     { id: 'environment', label: '代理环境', icon: <Server size={18} /> },
-    { id: 'reply', label: '自动回复', icon: autoReplyProcessing ? <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent)' }} /> : <MessagesSquare size={18} /> }
+    { id: 'reply', label: '自动回复', icon: autoReplyProcessing ? <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', color: '#19d973' }} /> : <MessagesSquare size={18} /> }
   ]
 
   const bottomTools = [
