@@ -209,7 +209,7 @@ export function App(): JSX.Element {
   const [autoReplyConfig, setAutoReplyConfig] = useState({
     apiKey: '',
     endpoint: 'https://api.openai.com/v1/chat/completions',
-    model: 'gpt-4o-mini',
+    model: 'abab6',
     systemPrompt: '你是一个友好的客服助手，请用简短的中文回复用户。',
   })
 
