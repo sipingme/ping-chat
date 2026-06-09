@@ -1411,7 +1411,7 @@ function AutoReplyPanel({
         <ProxyField label="自动回复">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Switch enabled={enabled} onChange={onToggleEnabled} />
-            {enabled && processing && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#4c7cff' }} />}
+            {enabled && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#4c7cff' }} />}
           </div>
         </ProxyField>
         <div className="proxy-note">开启后，收到新消息将自动调用 AI 生成回复</div>
