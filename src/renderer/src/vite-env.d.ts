@@ -14,8 +14,16 @@ interface Window {
     loadSessions: () => Promise<any[]>
     saveSessions: (sessions: any[]) => Promise<boolean>
     sendReply: (partition: string, content: string) => Promise<boolean>
+    selectChat: (partition: string, contactName: string) => Promise<boolean>
+    setMonitorEnabled: (partition: string, enabled: boolean) => Promise<boolean>
     onChatMessage: (
       callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => void
+    ) => () => void
+    onChatStats: (
+      callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
+    ) => () => void
+    onContactClicked: (
+      callback: (payload: { partition: string; name: string }) => void
     ) => () => void
   }
 }

@@ -15,6 +15,7 @@ import {
   Linkedin,
   Lock,
   MessageCircle,
+  MessageSquare,
   MessagesSquare,
   PanelLeft,
   Phone,
@@ -29,9 +30,11 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
   Zap,
   CircleHelp,
+  Eraser,
   Loader2,
 } from 'lucide-react'
 import * as SelectPrimitive from '@radix-ui/react-select'
@@ -206,8 +209,10 @@ export function App(): JSX.Element {
 
   /* ── Auto Reply State ── */
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
+  const [monitoringEnabled, setMonitoringEnabled] = useState(false)
   const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
   const [autoReplyProcessing, setAutoReplyProcessing] = useState(false)
+  const [chatStats, setChatStats] = useState<{ partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null>(null)
   const [autoReplyConfig, setAutoReplyConfig] = useState({
     apiKey: '',
     endpoint: 'https://api.openai.com/v1/chat/completions',
@@ -217,7 +222,7 @@ export function App(): JSX.Element {
     length: '简短',
     salutation: '亲',
     allowEmoji: true,
-    templates: [] as string[],
+    templates: [] as Array<{ title: string; content: string }>,
     delaySeconds: 0,
     role: '客服专员',
     blacklist: [] as string[],
@@ -231,6 +236,14 @@ export function App(): JSX.Element {
   useEffect(() => {
     const unsub = window.pingChat.onChatMessage((payload) => {
       setAutoReplyMessages((prev) => [...prev, payload])
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.pingChat.onChatStats((payload) => {
+      console.log('[Renderer ChatStats]', payload)
+      setChatStats(payload)
     })
     return unsub
   }, [])
@@ -426,6 +439,8 @@ export function App(): JSX.Element {
               onClose={() => setActiveRightTool('')}
               enabled={autoReplyEnabled}
               onToggleEnabled={setAutoReplyEnabled}
+              monitoringEnabled={monitoringEnabled}
+              onToggleMonitoring={(v) => { setMonitoringEnabled(v); if (activeSession) void window.pingChat.setMonitorEnabled(activeSession.partition, v) }}
               processing={autoReplyProcessing}
               processedCount={processedCount}
               messages={autoReplyMessages}
@@ -433,6 +448,7 @@ export function App(): JSX.Element {
               config={autoReplyConfig}
               onUpdateConfig={(updates) => setAutoReplyConfig((prev) => ({ ...prev, ...updates }))}
               onSendReply={(partition, content) => void window.pingChat.sendReply(partition, content)}
+              chatStats={chatStats}
             />
           )}
           <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} autoReplyProcessing={autoReplyProcessing} />
@@ -588,10 +604,13 @@ function SessionCard({
     onRefresh?.()
   }
   return (
-    <button
+    <section
+      role="button"
+      tabIndex={0}
       className={`session-card ${active ? 'active' : ''}`}
       style={{ '--accent': accent } as CSSProperties}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
       <div className="session-content">
         <div className="session-title-row">
@@ -608,7 +627,7 @@ function SessionCard({
         </button>
         <button onClick={(event) => { event.stopPropagation(); onClose() }}><X size={14} /></button>
       </div>
-    </button>
+    </section>
   )
 }
 
@@ -1287,10 +1306,10 @@ function CookieSettingsTab(): JSX.Element {
   )
 }
 
-function ProxyField({ label, children, className }: { label: string | ReactNode; children: ReactNode; className?: string }): JSX.Element {
+function ProxyField({ label, children, className }: { label?: string | ReactNode; children: ReactNode; className?: string }): JSX.Element {
   return (
-    <label className={`proxy-field ${className ?? ''}`}>
-      <span>{label}</span>
+    <label className={`proxy-field ${className ?? ''}`} style={label === '' || label == null ? { gridTemplateColumns: '1fr' } : undefined}>
+      {label !== '' && label != null && <span>{label}</span>}
       {children}
     </label>
   )
@@ -1349,6 +1368,8 @@ function AutoReplyPanel({
   onClose,
   enabled,
   onToggleEnabled,
+  monitoringEnabled,
+  onToggleMonitoring,
   processing,
   processedCount,
   messages,
@@ -1356,25 +1377,49 @@ function AutoReplyPanel({
   config,
   onUpdateConfig,
   onSendReply,
+  chatStats,
 }: {
   session?: ChatSession
   onClose?: () => void
   enabled: boolean
   onToggleEnabled: (v: boolean) => void
+  monitoringEnabled: boolean
+  onToggleMonitoring: (v: boolean) => void
   processing: boolean
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: string[]; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
+  chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
 }): JSX.Element {
-  const [activeTab, setActiveTab] = useState<'overview' | 'reply' | 'model'>('overview')
+  const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model'>('monitor')
   const [generating, setGenerating] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
+  const [autoReplyTarget, setAutoReplyTarget] = useState('')
+  const [showUserList, setShowUserList] = useState(false)
+  const [showGroupList, setShowGroupList] = useState(false)
   const tabsRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setReplyTarget('')
+    setAutoReplyTarget('')
+    setManualReply('')
+  }, [session?.id])
+
+  useEffect(() => {
+    if (!window.pingChat.onContactClicked) return
+    const unlisten = window.pingChat.onContactClicked((payload) => {
+      if (!session) return
+      if (payload.partition !== session.partition && payload.partition !== '') return
+      setReplyTarget(payload.name)
+      handleScrollTo('overview')
+    })
+    return () => { unlisten() }
+  }, [session?.partition])
+
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
   const grouped = useMemo(() => {
@@ -1395,44 +1440,8 @@ function AutoReplyPanel({
     }
   }, [activeTab])
 
-  // Scroll listener to sync active tab with scroll position
-  useEffect(() => {
-    const el = bodyRef.current
-    if (!el) return
-    const onScroll = () => {
-      const top = el.scrollTop
-      const overviewEl = document.getElementById('reply-overview-section')
-      const settingsEl = document.getElementById('reply-reply-section')
-      const modelEl = document.getElementById('reply-model-section')
-      const thresholds = [
-        { id: 'overview' as const, offset: overviewEl ? overviewEl.offsetTop : 0 },
-        { id: 'reply' as const, offset: settingsEl ? settingsEl.offsetTop : 99999 },
-        { id: 'model' as const, offset: modelEl ? modelEl.offsetTop : 99999 },
-      ]
-      let current: 'overview' | 'reply' | 'model' = 'overview'
-      for (let i = thresholds.length - 1; i >= 0; i--) {
-        if (top >= thresholds[i].offset - 30) {
-          current = thresholds[i].id
-          break
-        }
-      }
-      setActiveTab(current)
-    }
-    el.addEventListener('scroll', onScroll)
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [])
-
-  const handleScrollTo = (id: string): void => {
-    setActiveTab(id.replace('reply-', '').replace('-section', '') as 'overview' | 'reply' | 'model')
-    if (!bodyRef.current) return
-    if (id === 'reply-overview-section') {
-      bodyRef.current.scrollTo({ top: 0, behavior: 'smooth' })
-      return
-    }
-    const el = document.getElementById(id)
-    if (el) {
-      bodyRef.current.scrollTo({ top: el.offsetTop - 10, behavior: 'smooth' })
-    }
+  const handleScrollTo = (tab: 'monitor' | 'overview' | 'reply' | 'model'): void => {
+    setActiveTab(tab)
   }
 
   const handleGenerate = async (targetSender: string) => {
@@ -1469,7 +1478,6 @@ function AutoReplyPanel({
     if (!manualReply.trim() || !session) return
     onSendReply(session.partition, manualReply.trim())
     setManualReply('')
-    setReplyTarget('')
   }
 
   return (
@@ -1480,38 +1488,147 @@ function AutoReplyPanel({
       </div>
 
       <div className="proxy-tabs" ref={tabsRef}>
-        <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => handleScrollTo('reply-overview-section')}>状态概览</button>
-        <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleScrollTo('reply-reply-section')}>回复设置</button>
-        <button className={activeTab === 'model' ? 'active' : ''} onClick={() => handleScrollTo('reply-model-section')}>大模型设置</button>
+        <button className={activeTab === 'monitor' ? 'active' : ''} onClick={() => handleScrollTo('monitor')}>监控面板</button>
+        <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => handleScrollTo('overview')}>快捷回复</button>
+        <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleScrollTo('reply')}>自动回复</button>
+        <button className={activeTab === 'model' ? 'active' : ''} onClick={() => handleScrollTo('model')}>大模型设置</button>
         <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
       </div>
 
-      <div className="translation-body proxy-body" ref={bodyRef}>
-        <h3 className="proxy-section-title" id="reply-overview-section">状态概览</h3>
-        <ProxyField label="自动回复">
-          <Switch enabled={enabled} onChange={onToggleEnabled} />
+      <div className="translation-body proxy-body">
+        {activeTab === 'monitor' && (<>
+        <h3 className="proxy-section-title">监控面板</h3>
+        <ProxyField label="监控状态">
+          <Switch enabled={monitoringEnabled} onChange={onToggleMonitoring} />
         </ProxyField>
-        <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
+        <div className="proxy-note">开启后，每 5 秒自动扫描并上报聊天列表状态</div>
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        {monitoringEnabled && (
+          <>
+            <h3 className="proxy-section-title" id="reply-users-section">用户信息</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <button
+                className="secondary-action"
+                style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => { setShowUserList((v) => !v); setShowGroupList(false) }}
+              >
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>用户数量</span>
+                  <ChevronDown size={12} style={{ transform: showUserList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.userCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+              </button>
+              <button
+                className="secondary-action"
+                style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => { setShowGroupList((v) => !v); setShowUserList(false) }}
+              >
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>群聊数量</span>
+                  <ChevronDown size={12} style={{ transform: showGroupList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.groupCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+              </button>
+            </div>
+            {showUserList && (
+              <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
+                {(chatStats?.contacts ?? []).filter((c) => !c.isGroup).map((c, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? (
+                        <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                      )}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {showGroupList && (
+              <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
+                {(chatStats?.contacts ?? []).filter((c) => c.isGroup).map((c, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? (
+                        <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                      )}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-        <h3 className="proxy-section-title" id="reply-messages-section">消息监控</h3>
+        {monitoringEnabled && (<>
+        <h3 className="proxy-section-title" id="reply-messages-section" style={{ marginTop: 30 }}>消息监控</h3>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
           <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次已捕获</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{messages.length}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>未处理</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{chatStats?.totalUnread ?? messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
           </div>
           <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次已处理</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
-          </div>
-          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次未处理</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>条</span></div>
-          </div>
-          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>本次用户数</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{senders.length}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>已处理</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
           </div>
         </div>
+
+        {chatStats && chatStats.unreadContacts.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            {chatStats.unreadContacts.filter((c) => !c.isGroup).length > 0 && (
+              <div style={{ marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>用户</div>
+            )}
+            {chatStats.unreadContacts.filter((c) => !c.isGroup).map((c, i) => (
+              <div key={`u-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {c.avatar ? (
+                    <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                  )}
+                  <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                </div>
+              </div>
+            ))}
+            {chatStats.unreadContacts.filter((c) => c.isGroup).length > 0 && (
+              <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>群聊</div>
+            )}
+            {chatStats.unreadContacts.filter((c) => c.isGroup).map((c, i) => (
+              <div key={`g-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {c.avatar ? (
+                    <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                  )}
+                  <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {senders.length > 0 && (
           <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
         )}
@@ -1531,15 +1648,173 @@ function AutoReplyPanel({
                 <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
                   {generating ? '生成中…' : 'AI 回复'}
                 </button>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('reply-reply-section') }}>
+                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('overview') }}>
                   手动回复
                 </button>
               </div>
             </div>
           )
         })}
+        </>)}
 
-        <h3 className="proxy-section-title" id="reply-reply-section">回复设置</h3>
+        </>)} {activeTab === 'overview' && (<>
+        {replyTarget && (
+          <div style={{ marginTop: 20, marginBottom: 12, padding: '10px 12px', borderRadius: 6, border: '1px dashed #ff8c42', borderWidth: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#ff8c42' }}>正在回复: {replyTarget}</span>
+            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#ff8c42', border: 'none', cursor: 'pointer' }} onClick={() => { setReplyTarget(''); setManualReply(''); handleScrollTo('monitor') }}><X size={14} /></button>
+          </div>
+        )}
+        <h3 className="proxy-section-title" id="reply-overview-section">快捷回复</h3>
+        {replyTarget && manualReply && (
+          <div style={{ marginTop: 12 }}>
+            <textarea className="proxy-textarea" rows={3} placeholder="输入回复内容…" value={manualReply} onChange={(e) => setManualReply(e.target.value)} />
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button className="apply-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={handleManualSend}>发送</button>
+              <button className="secondary-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={() => { setReplyTarget(''); setManualReply('') }}>取消</button>
+            </div>
+          </div>
+        )}
+
+        <ProxyField label="" className="proxy-field--top">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <input
+              id="template-title-quick"
+              placeholder="模板标题"
+              style={{ height: 32, padding: '0 8px', borderRadius: 4, border: '1px solid #33373d', background: '#151719', color: '#d8dde3', fontSize: 13, outline: 'none' }}
+            />
+            <textarea
+              id="template-input-quick"
+              className="proxy-textarea"
+              rows={3}
+              placeholder="输入常用回复内容…"
+              style={{ resize: 'vertical' }}
+            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="create-button"
+                style={{ height: 32, fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', flex: 1, opacity: replyTarget ? 1 : 0.5, cursor: replyTarget ? 'pointer' : 'not-allowed' }}
+                disabled={!replyTarget}
+                onClick={() => {
+                  const contentInput = document.getElementById('template-input-quick') as HTMLInputElement
+                  const content = contentInput?.value.trim()
+                  if (!content || !replyTarget) return
+                  setManualReply(content)
+                  if (session) onSendReply(session.partition, content)
+                  setManualReply('')
+                  contentInput.value = ''
+                }}
+              >
+                <Send size={12} />
+                发送
+              </button>
+              <button
+                className="secondary-action"
+                style={{ height: 32, fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', flex: 1 }}
+                onClick={() => {
+                  const titleInput = document.getElementById('template-title-quick') as HTMLInputElement
+                  const contentInput = document.getElementById('template-input-quick') as HTMLInputElement
+                  const title = titleInput?.value.trim() || '未命名'
+                  const content = contentInput?.value.trim()
+                  if (!content) return
+                  onUpdateConfig({ templates: [...config.templates, { title, content }] })
+                  titleInput.value = ''
+                  contentInput.value = ''
+                }}
+              >
+                <Plus size={12} />
+                添加
+              </button>
+              <button
+                className="secondary-action"
+                style={{ height: 32, padding: '0 10px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', flex: 1 }}
+                onClick={() => {
+                  const titleInput = document.getElementById('template-title-quick') as HTMLInputElement
+                  const contentInput = document.getElementById('template-input-quick') as HTMLInputElement
+                  if (titleInput) titleInput.value = ''
+                  if (contentInput) contentInput.value = ''
+                }}
+              >
+                <Eraser size={12} />
+                清空
+              </button>
+            </div>
+          </div>
+        </ProxyField>
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+
+        <h3 className="proxy-section-title" id="reply-template-list-section">快捷模版</h3>
+        {config.templates.length === 0 ? (
+          <div className="proxy-note" style={{ margin: '0 0 15px 0', padding: '43px 10px', border: '1px dashed #3a4147', borderRadius: 6, textAlign: 'center', width: '100%', boxSizing: 'border-box' }}>暂无模板，请在上方的快捷模板区域添加</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {config.templates.map((t, i) => {
+              const canSend = !!replyTarget
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    background: '#252a2e',
+                    border: '1px solid #2c3135',
+                    opacity: canSend ? 1 : 0.45,
+                    transition: 'opacity 0.2s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <MessageSquare size={14} style={{ color: '#04c768', flexShrink: 0 }} />
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#f3f5f7', wordBreak: 'break-word' }}>{t.title}</span>
+                  </div>
+                  <span style={{ fontSize: 13, color: '#a8afb7', wordBreak: 'break-word', lineHeight: 1.5, paddingLeft: 22 }}>{t.content}</span>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                    <button
+                      className="create-button"
+                      style={{ height: 28, minWidth: 80, maxWidth: 80, padding: 0, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, opacity: canSend ? 1 : 0.5, cursor: canSend ? 'pointer' : 'not-allowed' }}
+                      disabled={!canSend}
+                      onClick={() => {
+                        setManualReply(t.content)
+                        handleManualSend()
+                      }}
+                    >
+                      <Send size={12} />
+                      发送
+                    </button>
+                    <button
+                      className="secondary-action"
+                      style={{ height: 28, minWidth: 80, maxWidth: 80, padding: 0, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      onClick={() => {
+                        const next = config.templates.filter((_, idx) => idx !== i)
+                        onUpdateConfig({ templates: next })
+                      }}
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        </>)} {activeTab === 'reply' && (<>
+        <h3 className="proxy-section-title" id="reply-reply-section">自动回复</h3>
+        <ProxyField label="自动处理消息">
+          <Switch enabled={enabled} onChange={onToggleEnabled} />
+        </ProxyField>
+        <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
+        {autoReplyTarget && (
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: '#f3f5f7' }}>正在自动回复: {autoReplyTarget}</span>
+            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#f3f5f7', border: 'none', cursor: 'pointer' }} onClick={() => setAutoReplyTarget('')}><X size={14} /></button>
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        <h4 style={{ fontSize: 16, margin: '0 0 20px', fontWeight: 700 }}>回复风格</h4>
         <ProxyField label="角色设定">
           <CustomSelect
             placeholder="选择角色"
@@ -1612,6 +1887,8 @@ function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">允许 AI 在回复中使用表情符号</div>
 
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>触发策略</h4>
         <ProxyField label="延迟回复">
           <CustomSelect
             placeholder="选择延迟"
@@ -1629,23 +1906,33 @@ function AutoReplyPanel({
 
         <ProxyField label="快捷模板" className="proxy-field--top">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <textarea
-                id="template-input"
-                className="proxy-textarea"
-                rows={3}
-                placeholder="输入常用回复内容…"
-                style={{ flex: 1, resize: 'vertical' }}
-              />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                <input
+                  id="template-title"
+                  placeholder="模板标题"
+                  style={{ height: 28, padding: '0 8px', borderRadius: 4, border: '1px solid #2c3135', background: '#1c2024', color: '#f3f5f7', fontSize: 12, outline: 'none' }}
+                />
+                <textarea
+                  id="template-input"
+                  className="proxy-textarea"
+                  rows={3}
+                  placeholder="输入常用回复内容…"
+                  style={{ flex: 1, resize: 'vertical' }}
+                />
+              </div>
               <button
                 className="secondary-action"
                 style={{ height: 28, padding: '0 10px', fontSize: 11, alignSelf: 'flex-start' }}
                 onClick={() => {
-                  const input = document.getElementById('template-input') as HTMLInputElement
-                  const text = input?.value.trim()
-                  if (!text) return
-                  onUpdateConfig({ templates: [...config.templates, text] })
-                  input.value = ''
+                  const titleInput = document.getElementById('template-title') as HTMLInputElement
+                  const contentInput = document.getElementById('template-input') as HTMLInputElement
+                  const title = titleInput?.value.trim() || '未命名'
+                  const content = contentInput?.value.trim()
+                  if (!content) return
+                  onUpdateConfig({ templates: [...config.templates, { title, content }] })
+                  titleInput.value = ''
+                  contentInput.value = ''
                 }}
               >
                 添加
@@ -1667,10 +1954,10 @@ function AutoReplyPanel({
                       color: '#a8afb7',
                       cursor: 'pointer',
                     }}
-                    onClick={() => { setManualReply(t); handleScrollTo('reply-reply-section') }}
-                    title="点击填入手动回复"
+                    onClick={() => { setManualReply(t.content); handleScrollTo('overview') }}
+                    title={t.content}
                   >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t.title}</span>
                     <span
                       style={{ color: '#8c96a1', fontSize: 12, lineHeight: 1 }}
                       onClick={(e) => {
@@ -1810,6 +2097,8 @@ function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">收到含关键词的消息时，发送回复不调用 AI</div>
 
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>模型参数</h4>
         <ProxyField label="Temperature">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
             <input
@@ -1856,17 +2145,7 @@ function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">AI 记忆多少轮对话历史，0 表示不限制</div>
 
-        {replyTarget && (
-          <div style={{ marginTop: 12 }}>
-            <div className="proxy-note">正在回复: {replyTarget}</div>
-            <textarea className="proxy-textarea" rows={3} placeholder="输入回复内容…" value={manualReply} onChange={(e) => setManualReply(e.target.value)} />
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <button className="apply-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={handleManualSend}>发送</button>
-              <button className="secondary-action" style={{ flex: 1, height: 28, fontSize: 11 }} onClick={() => setReplyTarget('')}>取消</button>
-            </div>
-          </div>
-        )}
-
+        </>)} {activeTab === 'model' && (<>
         <h3 className="proxy-section-title" id="reply-model-section">大模型设置</h3>
         <ProxyField label="模型" className="proxy-field--top">
           <CustomSelect
@@ -1899,7 +2178,7 @@ function AutoReplyPanel({
           <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">大模型服务的 API 密钥</div>
-      </div>
+      </>)} </div>
     </aside>
   )
 }

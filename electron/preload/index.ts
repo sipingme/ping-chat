@@ -1,11 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const currentDir = dirname(fileURLToPath(import.meta.url))
 
 const api = {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   maximize: () => ipcRenderer.invoke('window:maximize'),
   close: () => ipcRenderer.invoke('window:close'),
-  webviewPreloadPath: `file://${join(__dirname, '../webview-preload/index.js')}`,
+  webviewPreloadPath: `file://${join(currentDir, '../../electron/webview-preload/index.cjs')}`,
   setFingerprint: (partition: string, config: any) => ipcRenderer.invoke('fingerprint:set', partition, config),
   getFingerprint: (partition: string) => ipcRenderer.invoke('fingerprint:get', partition),
   setProxy: (partition: string, config: any) => ipcRenderer.invoke('proxy:set', partition, config),
@@ -14,10 +17,22 @@ const api = {
   loadSessions: () => ipcRenderer.invoke('sessions:load'),
   saveSessions: (sessions: any[]) => ipcRenderer.invoke('sessions:save', sessions),
   sendReply: (partition: string, content: string) => ipcRenderer.invoke('chat:reply', partition, content),
+  selectChat: (partition: string, contactName: string) => ipcRenderer.invoke('chat:select', partition, contactName),
+  setMonitorEnabled: (partition: string, enabled: boolean) => ipcRenderer.invoke('chat:monitor', partition, enabled),
   onChatMessage: (callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => void) => {
     const handler = (_event: any, payload: any) => callback(payload)
     ipcRenderer.on('chat:message', handler)
     return () => ipcRenderer.removeListener('chat:message', handler)
+  },
+  onChatStats: (callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('chat:stats', handler)
+    return () => ipcRenderer.removeListener('chat:stats', handler)
+  },
+  onContactClicked: (callback: (payload: { partition: string; name: string }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('chat:contact-clicked', handler)
+    return () => ipcRenderer.removeListener('chat:contact-clicked', handler)
   },
 }
 

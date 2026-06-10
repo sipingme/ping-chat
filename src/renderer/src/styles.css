@@ -1044,7 +1044,6 @@ button {
 }
 
 .secondary-action {
-  height: 32px;
   padding: 0 13px;
   border: 1px solid #3d4248;
   border-radius: 4px;
@@ -1056,6 +1055,18 @@ button {
 
 .user-agent-actions .secondary-action {
   margin-left: 58px;
+}
+
+.icon-action {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #8c96a1;
+  transition: color 0.15s ease;
+}
+
+.icon-action:hover {
+  color: #f3f5f7;
 }
 
 .cookie-box {

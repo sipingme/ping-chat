@@ -49,7 +49,9 @@ function createWindow(): void {
     webPreferences: {
       preload: existsSync(join(__dirname, '../preload/index.mjs'))
         ? join(__dirname, '../preload/index.mjs')
-        : join(__dirname, '../preload/index.js'),
+        : existsSync(join(__dirname, '../preload/index.cjs'))
+          ? join(__dirname, '../preload/index.cjs')
+          : join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -68,6 +70,10 @@ function createWindow(): void {
   mainWindow.webContents.on('console-message', (_event, level, message) => {
     const prefix = ['info', 'warn', 'error', 'debug'][level] || 'log'
     console.log(`[Renderer ${prefix}]`, message)
+  })
+
+  mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+    webContents.openDevTools({ mode: 'detach' })
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -207,12 +213,50 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.on('chat:stats', (_event, payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number }> }) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('chat:stats', payload)
+    }
+  })
+
+  ipcMain.on('chat:contact-clicked', (_event, payload: { partition: string; name: string }) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('chat:contact-clicked', payload)
+    }
+  })
+
   ipcMain.handle('chat:reply', (_event, partition: string, content: string) => {
-    const webContentsId = webviewRegistry.get(partition)
+    console.log('[Main] chat:reply received', partition, content.slice(0, 30))
+    let webContentsId = webviewRegistry.get(partition)
+    if (!webContentsId) webContentsId = webviewRegistry.get('') // guest page partition fallback
+    console.log('[Main] target webContentsId:', webContentsId, 'registry keys:', [...webviewRegistry.keys()])
     if (!webContentsId) return false
     const target = require('electron').webContents.fromId(webContentsId)
     if (!target) return false
     target.send('chat:reply', { partition, content })
+    console.log('[Main] sent chat:reply to webview')
+    return true
+  })
+
+  ipcMain.handle('chat:select', (_event, partition: string, contactName: string) => {
+    let webContentsId = webviewRegistry.get(partition)
+    if (!webContentsId) webContentsId = webviewRegistry.get('')
+    if (!webContentsId) return false
+    const target = require('electron').webContents.fromId(webContentsId)
+    if (!target) return false
+    target.send('chat:select', { partition, contactName })
+    return true
+  })
+
+  ipcMain.handle('chat:monitor', (_event, partition: string, enabled: boolean) => {
+    let webContentsId = webviewRegistry.get(partition)
+    if (!webContentsId) webContentsId = webviewRegistry.get('')
+    if (!webContentsId) return false
+    const target = require('electron').webContents.fromId(webContentsId)
+    if (!target) return false
+    target.send('chat:monitor', { partition: '', enabled })
     return true
   })
 

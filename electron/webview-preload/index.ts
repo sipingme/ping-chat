@@ -730,6 +730,10 @@ async function init() {
   try {
     // 从主进程获取本 partition 的指纹配置
     const partition = (document.querySelector('webview') as any)?.partition || ''
+
+    // 启动聊天抓取（不依赖指纹配置；partition 在 guest page 中可能为空字符串）
+    startAutoReplyScraper(partition)
+
     const config: FpConfig | null = await ipcRenderer.invoke('fingerprint:get', partition)
     if (!config) return
 
@@ -761,7 +765,6 @@ async function init() {
     injectHistory()
     isolateStorage(partition)
     injectDoNotTrack()
-    startAutoReplyScraper(partition)
   } catch (e) {
     console.error('[FingerprintPreload] init error:', e)
   }
@@ -778,10 +781,84 @@ interface ChatMessagePayload {
 
 function startAutoReplyScraper(partition: string) {
   try {
-    if (!partition) return
-
     // Register this webview with main process
     ipcRenderer.invoke('chat:register', partition)
+
+    // Listen for clicks on the chat list to notify renderer
+    document.addEventListener('click', (e) => {
+      const chatItem = (e.target as HTMLElement)?.closest?.('.chat_item')
+      if (chatItem) {
+        const nameEl = chatItem.querySelector('.nickname_text') as HTMLElement | null
+        const name = nameEl?.innerText?.trim()
+        if (name) {
+          ipcRenderer.send('chat:contact-clicked', { partition, name })
+          console.log('[ChatStats] contact clicked:', name)
+        }
+      }
+    })
+
+    // Listen for select-chat commands from renderer
+    ipcRenderer.on('chat:select', (_event, payload: { partition: string; contactName: string }) => {
+      console.log('[ChatStats] selectChat request for:', payload.contactName)
+      const items = document.querySelectorAll('.chat_item')
+      console.log('[ChatStats] found', items.length, 'chat items')
+      for (const el of Array.from(items)) {
+        const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
+        const name = nameEl?.innerText?.trim() || ''
+        if (name === payload.contactName) {
+          console.log('[ChatStats] matching chat found:', name)
+          const target = el as HTMLElement
+          target.scrollIntoView({ behavior: 'auto', block: 'center' })
+          target.focus()
+
+          // Get center coordinates for realistic click
+          const rect = target.getBoundingClientRect()
+          const cx = rect.left + rect.width / 2
+          const cy = rect.top + rect.height / 2
+          const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, screenX: cx, screenY: cy, detail: 1 }
+
+          // Try Angular scope click if accessible
+          try {
+            const angular = (window as any).angular
+            if (angular) {
+              const scope = angular.element(target).scope?.()
+              if (scope?.itemClick) {
+                scope.itemClick(scope.chatContact || scope.chat)
+                scope.$apply?.()
+                console.log('[ChatStats] triggered via Angular scope.itemClick')
+                break
+              }
+              if (scope?.selectChat) {
+                scope.selectChat(scope.chatContact || scope.chat)
+                scope.$apply?.()
+                console.log('[ChatStats] triggered via Angular scope.selectChat')
+                break
+              }
+            }
+          } catch (e) {
+            console.log('[ChatStats] Angular scope call failed:', e)
+          }
+
+          // Fallback: dispatch realistic mouse events on multiple candidate elements
+          const clickables = [
+            el.querySelector('[ng-click]') as HTMLElement | null,
+            el.querySelector('.info') as HTMLElement | null,
+            el.querySelector('.chat_item') as HTMLElement | null,
+            target
+          ].filter(Boolean) as HTMLElement[]
+
+          for (const clickable of clickables) {
+            clickable.dispatchEvent(new MouseEvent('mousedown', opts))
+            clickable.dispatchEvent(new MouseEvent('mouseup', opts))
+            clickable.dispatchEvent(new MouseEvent('click', opts))
+            // Also call native click() as extra fallback
+            try { (clickable as any).click() } catch {}
+          }
+          console.log('[ChatStats] dispatched clicks on', clickables.length, 'elements for', name)
+          break
+        }
+      }
+    })
 
     const seen = new Set<string>()
 
@@ -840,40 +917,197 @@ function startAutoReplyScraper(partition: string) {
   const target = document.body
   observer.observe(target, { childList: true, subtree: true })
 
-  // Listen for reply commands from main/renderer
-  ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string }) => {
-    if (payload.partition !== partition) return
+  // ── Chat list stats scraper ─────────────────────────
+  async function extractChatListStats() {
+    const items = document.querySelectorAll('.chat_item')
+    let groupCount = 0
+    let totalUnread = 0
+    const contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
+    const unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
 
-    // Try common input patterns
-    const input =
-      document.querySelector('textarea[placeholder*="输入"], textarea[placeholder*="message"], textarea[placeholder*="reply"], .editor textarea, .chat-input textarea, [contenteditable="true"]') as HTMLElement | null
+    for (const el of Array.from(items)) {
+      const username = el.getAttribute('data-username') || ''
+      const isGroup = username.startsWith('@@')
 
-    if (input) {
-      if (input.tagName === 'TEXTAREA') {
-        ;(input as HTMLTextAreaElement).value = payload.content
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-        input.dispatchEvent(new Event('change', { bubbles: true }))
-      } else if (input.isContentEditable) {
-        input.innerText = payload.content
-        input.dispatchEvent(new Event('input', { bubbles: true }))
+      const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
+      const name = nameEl?.innerText?.trim() || username
+
+      // Try specific WeChat web avatar selectors
+      let avatarEl = el.querySelector('img.img, img.avatar, .avatar img, .user-avatar img') as HTMLImageElement | null
+      if (!avatarEl) {
+        avatarEl = el.querySelector('img') as HTMLImageElement | null
+      }
+      let avatarUrl = avatarEl?.getAttribute('src') || avatarEl?.src || ''
+
+      // Skip File Transfer / 文件传输助手
+      if (name === '文件传输助手' || name === 'File Transfer') continue
+
+      if (isGroup) {
+        groupCount++
+      }
+
+      // Try Angular scope for unread count
+      let unread = 0
+      let angularFound = false
+      try {
+        const angular = (window as any).angular
+        if (angular) {
+          let scope = angular.element(el).scope?.()
+          if (!scope?.chatContact) {
+            const childScopeEl = el.querySelector('.ng-scope')
+            if (childScopeEl) {
+              scope = angular.element(childScopeEl).scope?.()
+            }
+          }
+          if (!scope?.chatContact && scope?.$parent) {
+            scope = scope.$parent
+          }
+          if (scope?.chatContact?.NoticeCount != null) {
+            unread = Number(scope.chatContact.NoticeCount) || 0
+            angularFound = true
+          }
+        }
+      } catch (e) {
+        console.error('[ChatStats] angular scope error:', name, e)
+      }
+
+      // DOM fallback: detect unread badges / red dots
+      if (unread === 0) {
+        const badgeNew = el.querySelector('.web_wechat_reddot_bignew, [class*="reddot_big"]')
+        const badgeDot = el.querySelector('.web_wechat_reddot, [class*="reddot"]')
+        if (badgeNew) {
+          const text = badgeNew.textContent?.trim() || ''
+          unread = text ? parseInt(text, 10) || 1 : 1
+        } else if (badgeDot) {
+          unread = 1
+        }
+      }
+
+      if (unread > 0) {
+        console.log('[ChatStats] unread:', name, unread, angularFound ? 'angular' : 'dom')
+      }
+
+      // Convert avatar URL to base64 data URL using webview session cookies
+      let avatar = ''
+      if (avatarUrl && !avatarUrl.startsWith('data:')) {
+        try {
+          const res = await fetch(avatarUrl)
+          if (res.ok) {
+            const blob = await res.blob()
+            avatar = await new Promise<string>((resolve) => {
+              const reader = new FileReader()
+              reader.onloadend = () => resolve(reader.result as string)
+              reader.readAsDataURL(blob)
+            })
+          }
+        } catch (e) {
+          console.log('[ChatStats] avatar fetch failed for', name, e)
+        }
+      } else {
+        avatar = avatarUrl
+      }
+
+      contacts.push({ name, isGroup, unread, avatar })
+
+      if (unread > 0) {
+        totalUnread += unread
+        unreadContacts.push({ name, isGroup, unread, avatar })
       }
     }
 
-    // Try common send buttons (avoid :has() - unsupported in older Chromium)
-    let sendBtn: HTMLElement | null =
-      document.querySelector('button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"]') as HTMLElement | null
-    if (!sendBtn) {
-      // fallback: first button inside a form near the input
-      sendBtn = input?.closest('form')?.querySelector('button') as HTMLElement | null
+    return {
+      partition,
+      totalCount: contacts.length,
+      groupCount,
+      userCount: contacts.length - groupCount,
+      totalUnread,
+      contacts,
+      unreadContacts,
+    }
+  }
+
+  // Monitor toggle state — defaults to false (off)
+  let monitoringEnabled = false
+
+  // Listen for monitor toggle commands from renderer
+  ipcRenderer.on('chat:monitor', (_event, payload: { partition: string; enabled: boolean }) => {
+    monitoringEnabled = payload.enabled
+    console.log('[ChatStats] monitoring enabled =', monitoringEnabled)
+    // Trigger an immediate scan when turned on
+    if (monitoringEnabled) {
+      void extractChatListStats().then((stats) => {
+        console.log('[ChatStats] immediate scan', stats)
+        if (stats.totalCount > 0) {
+          ipcRenderer.send('chat:stats', stats)
+        }
+      })
+    }
+  })
+
+  // Send stats periodically (only when monitoring is enabled)
+  setInterval(async () => {
+    if (!monitoringEnabled) return
+    const stats = await extractChatListStats()
+    console.log('[ChatStats]', stats)
+    if (stats.totalCount > 0) {
+      ipcRenderer.send('chat:stats', stats)
+    }
+  }, 5000)
+
+  // Listen for reply commands from main/renderer
+  ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string }) => {
+    // WeChat Web specific selectors first, then generic fallbacks
+    let input: HTMLElement | null = document.querySelector('#editArea[contenteditable="true"]') as HTMLElement | null
+    if (!input) input = document.querySelector('.edit_area [contenteditable="true"]') as HTMLElement | null
+    if (!input) {
+      input = document.querySelector('textarea[placeholder*="输入"], textarea[placeholder*="message"], textarea[placeholder*="reply"], .editor textarea, .chat-input textarea, [contenteditable="true"]') as HTMLElement | null
     }
 
-    if (sendBtn) {
-      sendBtn.click()
-    } else if (input && input.tagName === 'TEXTAREA') {
-      // Fallback: trigger Enter key
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+    if (!input) {
+      console.log('[ChatStats] reply: no input found')
+      return
     }
+
+    console.log('[ChatStats] reply: input found', input.tagName, input.className, input.id)
+
+    // Set content
+    if (input.tagName === 'TEXTAREA') {
+      const ta = input as HTMLTextAreaElement
+      ta.value = payload.content
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      ta.dispatchEvent(new Event('change', { bubbles: true }))
+    } else if (input.isContentEditable) {
+      // Use execCommand for contenteditable to trigger proper mutations
+      input.focus()
+      document.execCommand('selectAll', false, undefined)
+      document.execCommand('insertText', false, payload.content)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+
+    // Small delay to let the app process the input before sending
+    setTimeout(() => {
+      // WeChat Web send button is often an <a> tag with class containing 'send'
+      let sendBtn: HTMLElement | null =
+        document.querySelector('a.btn_send, a[class*="send"], .btn_send, button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"]') as HTMLElement | null
+      if (!sendBtn) {
+        sendBtn = input?.closest('form')?.querySelector('button, a[class*="send"]') as HTMLElement | null
+      }
+
+      if (sendBtn) {
+        sendBtn.click()
+        console.log('[ChatStats] reply: clicked send button')
+        return
+      }
+
+      // Fallback: simulate Enter key with full KeyboardEvent init
+      input.focus()
+      const keyOptions = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }
+      input.dispatchEvent(new KeyboardEvent('keydown', keyOptions))
+      input.dispatchEvent(new KeyboardEvent('keypress', keyOptions))
+      input.dispatchEvent(new KeyboardEvent('keyup', keyOptions))
+      console.log('[ChatStats] reply: triggered Enter key')
+    }, 300)
   })
   } catch (e) {
     console.error('[AutoReply] scraper init error:', e)
