@@ -979,7 +979,7 @@ function startAutoReplyScraper(partition: string) {
   // Initial scrape after page settles
   setTimeout(() => {
     extractMessages().forEach((m) => {
-      if (m.isFromUser) ipcRenderer.send('chat:message', m)
+      ipcRenderer.send('chat:message', m)
     })
   }, 3000)
 
@@ -993,7 +993,7 @@ function startAutoReplyScraper(partition: string) {
       }
     }
     if (!hasNew) return
-    const newMsgs = extractMessages().filter((m) => m.isFromUser)
+    const newMsgs = extractMessages()
     newMsgs.forEach((m) => ipcRenderer.send('chat:message', m))
   })
 

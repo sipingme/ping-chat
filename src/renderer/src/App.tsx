@@ -226,7 +226,7 @@ export function App(): JSX.Element {
     salutation: '亲',
     allowEmoji: true,
     templates: [] as Array<{ title: string; content: string }>,
-    delaySeconds: 0,
+    delaySeconds: 15,
     role: '客服专员',
     blacklist: [] as string[],
     keywords: [] as string[],
@@ -237,7 +237,7 @@ export function App(): JSX.Element {
     topP: 1.0,
     frequencyPenalty: 0,
     presencePenalty: 0,
-    autoSendSingle: true,
+    autoSend: true,
   })
 
   useEffect(() => {
@@ -266,11 +266,18 @@ export function App(): JSX.Element {
   autoReplyTargetRef.current = autoReplyTarget
   const processedReplyKeys = useRef(new Set<string>())
   const [processedCount, setProcessedCount] = useState(0)
+  const globalPendingPartitionRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!autoReplyEnabled) return
     const lastMsg = autoReplyMessages[autoReplyMessages.length - 1]
-    if (!lastMsg || !lastMsg.isFromUser) return
+    if (!lastMsg) return
+    // If a my reply in the locked partition arrives, unlock and move on
+    if (globalPendingPartitionRef.current && !lastMsg.isFromUser && lastMsg.partition === globalPendingPartitionRef.current) {
+      globalPendingPartitionRef.current = null
+      return
+    }
+    if (!lastMsg.isFromUser) return
     const key = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
     if (processedReplyKeys.current.has(key)) return
     // Skip group chat messages
@@ -278,6 +285,8 @@ export function App(): JSX.Element {
     if (contact?.isGroup) return
     // Single mode auto-reply is handled by AutoReplyPanel workbench
     if (autoReplyModeRef.current === 'single') return
+    // If locked on another user, skip new messages from other users
+    if (globalPendingPartitionRef.current && lastMsg.partition !== globalPendingPartitionRef.current) return
     processedReplyKeys.current.add(key)
     setProcessedCount((c) => c + 1)
 
@@ -299,7 +308,8 @@ export function App(): JSX.Element {
       if (config.delaySeconds > 0) {
         await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
       }
-      let history = autoReplyMessages.filter((m) => m.sender === lastMsg.sender)
+      // Gather full conversation history for this chat (includes my replies)
+      let history = autoReplyMessages.filter((m) => m.partition === lastMsg.partition)
       if (config.contextRounds > 0) {
         history = history.slice(-config.contextRounds * 2)
       }
@@ -333,7 +343,15 @@ export function App(): JSX.Element {
           reply = reply.replace(/<think(?:ing)?>.*?<\/think(?:ing)?>/gs, '')
           reply = reply.replace(/<reason(?:ing)?>.*?<\/reason(?:ing)?>/gs, '')
           reply = reply.trim()
-          await window.pingChat.sendReply(lastMsg.partition, reply)
+          if (config.autoSend) {
+            // Switch to the target user's chat window before sending
+            await window.pingChat.selectChat(lastMsg.partition, lastMsg.sender)
+            await new Promise((r) => setTimeout(r, 500))
+            await window.pingChat.sendReply(lastMsg.partition, reply)
+          } else {
+            // Lock on this partition until manual reply is detected
+            globalPendingPartitionRef.current = lastMsg.partition
+          }
         }
       } catch (e) {
         console.error('[AutoReply] AI generation failed:', e)
@@ -502,7 +520,7 @@ function TitleBar({ onlineCount, offlineCount }: { onlineCount: number; offlineC
         <button className="traffic maximize" onClick={() => window.pingChat?.maximize()} />
       </div>
       <div className="brand-block">
-        <span className="brand-name">PingChat 0.2.4</span>
+        <span className="brand-name">PingChat 0.2.5</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
         <span>离线: <b className="red">0</b></span>
         <button className="tiny-icon"><RefreshCw size={12} /></button>
@@ -1428,7 +1446,7 @@ function AutoReplyPanel({
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number; topP: number; frequencyPenalty: number; presencePenalty: number; autoSendSingle: boolean }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number; topP: number; frequencyPenalty: number; presencePenalty: number; autoSend: boolean }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
   chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
@@ -1586,19 +1604,19 @@ function AutoReplyPanel({
       try {
         const reply = await handleWorkbenchGenerate(autoReplyTarget, pendingConversation)
         if (!reply || !session) return
-        if (config.autoSendSingle) {
+        if (config.autoSend) {
           if (config.delaySeconds > 0) {
             await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
           }
           onSendReply(session.partition, reply)
           setWorkbenchPrompt('')
         }
-        // When autoSendSingle is false, reply is already set in workbenchPrompt by handleWorkbenchGenerate
+        // When autoSend is false, reply is already set in workbenchPrompt by handleWorkbenchGenerate
       } finally {
         isAutoSendingRef.current = false
       }
     })()
-  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSendSingle, onSendReply])
+  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSend, onSendReply])
 
   useLayoutEffect(() => {
     const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
@@ -2095,8 +2113,8 @@ function AutoReplyPanel({
         {/* ── 回复工作台 ── */}
         {enabled && (
           <>
-            <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-            <h4 style={{ fontSize: 16, margin: '0 0 12px', fontWeight: 700 }}>回复工作台</h4>
+            {autoReplyMode === 'single' && <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />}
+            <h4 style={{ fontSize: 16, margin: autoReplyMode === 'single' ? '0 0 12px' : '20px 0 12px', fontWeight: 700 }}>回复工作台</h4>
             <div style={{ borderRadius: 8, border: '1px solid #2c3135', background: '#1a1c1e', padding: 12 }}>
 
             {pendingConversation.length > 0 && (
@@ -2217,14 +2235,10 @@ function AutoReplyPanel({
             }}
           />
         </ProxyField>
-        {autoReplyMode === 'single' && (
-          <>
-            <ProxyField label="自动发送">
-              <Switch enabled={config.autoSendSingle} onChange={(v) => onUpdateConfig({ autoSendSingle: v })} />
-            </ProxyField>
-            <div className="proxy-note">开启自动发送，关闭仅填输入框</div>
-          </>
-        )}
+        <ProxyField label="自动发送">
+          <Switch enabled={config.autoSend} onChange={(v) => onUpdateConfig({ autoSend: v })} />
+        </ProxyField>
+        <div className="proxy-note">开启自动发送，关闭仅填输入框</div>
 
         <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>触发策略</h4>
@@ -2234,86 +2248,16 @@ function AutoReplyPanel({
             value={String(config.delaySeconds)}
             options={[
               { value: '0', label: '立即回复' },
-              { value: '2', label: '延迟 2 秒' },
               { value: '5', label: '延迟 5 秒' },
-              { value: '10', label: '延迟 10 秒' },
+              { value: '15', label: '延迟 15 秒' },
+              { value: '30', label: '延迟 30 秒' },
+              { value: '45', label: '延迟 45 秒' },
+              { value: '60', label: '延迟 60 秒' },
             ]}
             onChange={(val) => onUpdateConfig({ delaySeconds: Number(val) })}
           />
         </ProxyField>
         <div className="proxy-note">收到消息后延迟一段时间再自动回复</div>
-
-        <ProxyField label="快捷模板" className="proxy-field--top">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-                <input
-                  id="template-title"
-                  placeholder="模板标题"
-                  style={{ height: 28, padding: '0 8px', borderRadius: 4, border: '1px solid #2c3135', background: '#1c2024', color: '#f3f5f7', fontSize: 12, outline: 'none' }}
-                />
-                <textarea
-                  id="template-input"
-                  className="proxy-textarea"
-                  rows={3}
-                  placeholder="输入常用回复内容…"
-                  style={{ flex: 1, resize: 'vertical' }}
-                />
-              </div>
-              <button
-                className="secondary-action"
-                style={{ height: 28, padding: '0 10px', fontSize: 11, alignSelf: 'flex-start' }}
-                onClick={() => {
-                  const titleInput = document.getElementById('template-title') as HTMLInputElement
-                  const contentInput = document.getElementById('template-input') as HTMLInputElement
-                  const title = titleInput?.value.trim() || '未命名'
-                  const content = contentInput?.value.trim()
-                  if (!content) return
-                  onUpdateConfig({ templates: [...config.templates, { title, content }] })
-                  titleInput.value = ''
-                  contentInput.value = ''
-                }}
-              >
-                添加
-              </button>
-            </div>
-            {config.templates.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {config.templates.map((t, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 4,
-                      background: '#2c3135',
-                      fontSize: 11,
-                      color: '#a8afb7',
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => { setManualReply(t.content); handleScrollTo('overview') }}
-                    title={t.content}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t.title}</span>
-                    <span
-                      style={{ color: '#8c96a1', fontSize: 12, lineHeight: 1 }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        const next = config.templates.filter((_, idx) => idx !== i)
-                        onUpdateConfig({ templates: next })
-                      }}
-                    >
-                      ×
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </ProxyField>
-        <div className="proxy-note">点击模板可快速填入手动回复框，点 × 删除</div>
 
         <ProxyField label="黑名单" className="proxy-field--top">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
