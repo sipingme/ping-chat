@@ -520,7 +520,7 @@ function TitleBar({ onlineCount, offlineCount }: { onlineCount: number; offlineC
         <button className="traffic maximize" onClick={() => window.pingChat?.maximize()} />
       </div>
       <div className="brand-block">
-        <span className="brand-name">PingChat 0.2.5</span>
+        <span className="brand-name">PingChat 0.2.6</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
         <span>离线: <b className="red">0</b></span>
         <button className="tiny-icon"><RefreshCw size={12} /></button>

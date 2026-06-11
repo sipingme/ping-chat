@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
+const { wechatAdapter } = require('./wechat-adapter.cjs');
+const { xiaohongshuAdapter } = require('./xiaohongshu-adapter.cjs');
 function parseNum(val) {
     if (!val)
         return 0;
@@ -776,402 +778,126 @@ async function init() {
 }
 function startAutoReplyScraper(partition) {
     try {
+        // Detect platform and pick adapter
+        const adapters = [wechatAdapter, xiaohongshuAdapter]
+        const adapter = adapters.find((a) => a.detect())
+        if (!adapter) {
+            console.log('[ChatStats] no platform adapter matched for', window.location.hostname)
+            return
+        }
+        console.log('[ChatStats] using adapter:', adapter.name)
+
         // Register this webview with main process
-        electron_1.ipcRenderer.invoke('chat:register', partition);
-        // Listen for clicks on the chat list to notify renderer (both users and groups)
+        electron_1.ipcRenderer.invoke('chat:register', partition)
+
+        // ── Contact click tracking ──────────────────────────
         document.addEventListener('click', (e) => {
             const target = e.target
-            const chatItem = target?.closest?.('.chat_item')
-            console.log('[ChatStats] click detected, chatItem found:', !!chatItem, 'target class:', target?.className)
-            if (chatItem) {
-                const nameEl = chatItem.querySelector('.nickname_text')
-                const name = nameEl?.innerText?.trim()
-                let avatarEl = chatItem.querySelector('img.img, img.avatar, .avatar img, .user-avatar img')
-                if (!avatarEl) {
-                    avatarEl = chatItem.querySelector('img')
-                }
-                console.log('[ChatStats] avatarEl found:', !!avatarEl, 'classes:', avatarEl?.className)
-                let avatarUrl = avatarEl?.getAttribute('data-src')
-                    || avatarEl?.getAttribute('data-original')
-                    || avatarEl?.getAttribute('src')
-                    || avatarEl?.src
-                    || ''
-                // Convert relative URL to absolute
-                if (avatarUrl && !avatarUrl.startsWith('http') && !avatarUrl.startsWith('//')) {
-                    const origin = window.location.origin
-                    avatarUrl = origin + (avatarUrl.startsWith('/') ? avatarUrl : '/' + avatarUrl)
-                }
-                console.log('[ChatStats] name:', name, 'avatarUrl:', avatarUrl?.slice(0, 80))
-                if (name) {
-                    // Try to convert image to base64 via canvas
-                    if (avatarUrl) {
-                        const img = new Image()
-                        img.crossOrigin = 'anonymous'
-                        img.onload = () => {
-                            try {
-                                const canvas = document.createElement('canvas')
-                                canvas.width = img.naturalWidth || 64
-                                canvas.height = img.naturalHeight || 64
-                                const ctx = canvas.getContext('2d')
-                                if (ctx) {
-                                    ctx.drawImage(img, 0, 0)
-                                    const base64 = canvas.toDataURL('image/png')
-                                    console.log('[ChatStats] base64 success, length:', base64.length)
-                                    electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: base64 })
-                                }
-                            } catch (err) {
-                                console.log('[ChatStats] canvas error:', err)
-                                electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
-                            }
+            let chatItem = target?.closest?.('.chat_item')
+            if (!chatItem && adapter.name === 'xiaohongshu') {
+                chatItem = target?.closest?.('[class*="session"], [class*="chat-item"]')
+            }
+            if (!chatItem) return
+
+            const contact = adapter.extractContactFromElement(chatItem)
+            if (!contact) return
+
+            const { name, avatarUrl } = contact
+            console.log('[ChatStats] click on:', name, 'avatarUrl:', avatarUrl?.slice(0, 80))
+
+            if (avatarUrl) {
+                const img = new Image()
+                img.crossOrigin = 'anonymous'
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas')
+                        canvas.width = img.naturalWidth || 64
+                        canvas.height = img.naturalHeight || 64
+                        const ctx = canvas.getContext('2d')
+                        if (ctx) {
+                            ctx.drawImage(img, 0, 0)
+                            const base64 = canvas.toDataURL('image/png')
+                            console.log('[ChatStats] base64 success, length:', base64.length)
+                            electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: base64 })
                         }
-                        img.onerror = () => {
-                            console.log('[ChatStats] crossOrigin image load failed, sending URL')
-                            electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
-                        }
-                        img.src = avatarUrl
-                    } else {
-                        electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: '' })
+                    } catch (err) {
+                        console.log('[ChatStats] canvas error:', err)
+                        electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
                     }
                 }
+                img.onerror = () => {
+                    console.log('[ChatStats] crossOrigin image load failed, sending URL')
+                    electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
+                }
+                img.src = avatarUrl
+            } else {
+                electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: '' })
             }
         })
-        // Listen for select-chat commands from renderer
+
+        // ── IPC listeners delegated to adapter ─────────────
         electron_1.ipcRenderer.on('chat:select', (_event, payload) => {
-            console.log('[ChatStats] selectChat request for:', payload.contactName);
-            const items = document.querySelectorAll('.chat_item');
-            console.log('[ChatStats] found', items.length, 'chat items');
-            for (const el of Array.from(items)) {
-                const nameEl = el.querySelector('.nickname_text');
-                const name = nameEl?.innerText?.trim() || '';
-                if (name === payload.contactName) {
-                    console.log('[ChatStats] matching chat found:', name);
-                    const target = el;
-                    target.scrollIntoView({ behavior: 'auto', block: 'center' });
-                    target.focus();
-                    // Get center coordinates for realistic click
-                    const rect = target.getBoundingClientRect();
-                    const cx = rect.left + rect.width / 2;
-                    const cy = rect.top + rect.height / 2;
-                    const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, screenX: cx, screenY: cy, detail: 1 };
-                    // Try Angular scope click if accessible
-                    try {
-                        const angular = window.angular;
-                        if (angular) {
-                            const scope = angular.element(target).scope?.();
-                            if (scope?.itemClick) {
-                                scope.itemClick(scope.chatContact || scope.chat);
-                                scope.$apply?.();
-                                console.log('[ChatStats] triggered via Angular scope.itemClick');
-                                break;
-                            }
-                            if (scope?.selectChat) {
-                                scope.selectChat(scope.chatContact || scope.chat);
-                                scope.$apply?.();
-                                console.log('[ChatStats] triggered via Angular scope.selectChat');
-                                break;
-                            }
-                        }
-                    }
-                    catch (e) {
-                        console.log('[ChatStats] Angular scope call failed:', e);
-                    }
-                    // Fallback: dispatch realistic mouse events on multiple candidate elements
-                    const clickables = [
-                        el.querySelector('[ng-click]'),
-                        el.querySelector('.info'),
-                        el.querySelector('.chat_item'),
-                        target
-                    ].filter(Boolean);
-                    for (const clickable of clickables) {
-                        clickable.dispatchEvent(new MouseEvent('mousedown', opts));
-                        clickable.dispatchEvent(new MouseEvent('mouseup', opts));
-                        clickable.dispatchEvent(new MouseEvent('click', opts));
-                        // Also call native click() as extra fallback
-                        try {
-                            clickable.click();
-                        }
-                        catch { }
-                    }
-                    console.log('[ChatStats] dispatched clicks on', clickables.length, 'elements for', name);
-                    break;
-                }
-            }
-        });
-        const seen = new Set();
-        function extractMessages() {
-            const msgs = [];
-            // TODO: adjust selectors for xiaohongshu/wechat web IM DOM
-            const msgEls = document.querySelectorAll('[class*="message"], [class*="msg"], .chat-item, .message-item, .im-message');
-            msgEls.forEach((el) => {
-                const text = el.querySelector('[class*="content"], [class*="text"], .msg-content, .message-text')?.innerText?.trim();
-                if (!text)
-                    return;
-                const name = el.querySelector('[class*="name"], [class*="nickname"], .sender-name')?.innerText?.trim() || '对方';
-                // Heuristic: if element is on right side or has 'self'/'me' class, it's from us
-                const isSelf = el.classList.toString().includes('self') ||
-                    el.classList.toString().includes('me') ||
-                    el.classList.toString().includes('right') ||
-                    el.style.alignSelf === 'flex-end' ||
-                    el.style.textAlign === 'right';
-                const key = `${name}:${text}`;
-                if (seen.has(key))
-                    return;
-                seen.add(key);
-                msgs.push({
-                    partition,
-                    sender: isSelf ? '我' : name,
-                    content: text,
-                    isFromUser: !isSelf,
-                    timestamp: Date.now(),
-                });
-            });
-            return msgs;
-        }
-        function extractAllMessages() {
-            const msgs = [];
-            // WeChat web IM: each message is a .message element with .me (self) or .you (other)
-            const msgEls = document.querySelectorAll('.message');
-            console.log('[ChatStats] extractAllMessages found', msgEls.length, '.message elements');
-            msgEls.forEach((el, i) => {
-                // Skip system messages (timestamps)
-                if (el.classList.contains('message_system')) return;
-                // Text is in .js_message_plain inside .bubble_cont > .plain
-                let text = el.querySelector('.js_message_plain')?.innerText?.trim();
-                if (!text) {
-                    text = el.querySelector('.plain pre')?.innerText?.trim();
-                }
-                if (!text) {
-                    text = el.innerText?.trim();
-                }
-                if (!text) {
-                    if (i < 3) console.log('[ChatStats] msg', i, 'no text, classes:', el.className);
-                    return;
-                }
-                // Sender name from avatar img title attribute
-                const avatarImg = el.querySelector('img.avatar');
-                const name = avatarImg?.getAttribute('title') || '对方';
-                // isSelf: .message has class 'me' for my messages, 'you' for theirs
-                const isSelf = el.classList.contains('me');
-                if (i < 3) console.log('[ChatStats] msg', i, 'sender:', name, 'isSelf:', isSelf, 'text:', text.slice(0, 30));
-                msgs.push({
-                    partition,
-                    sender: isSelf ? '我' : name,
-                    content: text,
-                    isFromUser: !isSelf,
-                    timestamp: Date.now(),
-                });
-            });
-            console.log('[ChatStats] extractAllMessages returning', msgs.length, 'messages');
-            return msgs;
-        }
-        // Initial scrape after page settles
+            console.log('[ChatStats] selectChat request for:', payload.contactName)
+            adapter.selectChat(payload.contactName)
+        })
+
+        electron_1.ipcRenderer.on('chat:reply', (_event, payload) => {
+            adapter.sendReply(payload.content)
+        })
+
+        // ── Message monitoring ──────────────────────────────
         setTimeout(() => {
-            extractMessages().forEach((m) => {
-                electron_1.ipcRenderer.send('chat:message', m);
-            });
-        }, 3000);
-        // Observe for new messages
+            const msgs = adapter.extractMessages(partition)
+            msgs.forEach((m) => electron_1.ipcRenderer.send('chat:message', m))
+        }, 3000)
+
         const observer = new MutationObserver((mutations) => {
-            let hasNew = false;
+            let hasNew = false
             for (const mut of mutations) {
                 if (mut.type === 'childList' && mut.addedNodes.length > 0) {
-                    hasNew = true;
-                    break;
+                    hasNew = true
+                    break
                 }
             }
-            if (!hasNew)
-                return;
-            const newMsgs = extractMessages();
-            newMsgs.forEach((m) => electron_1.ipcRenderer.send('chat:message', m));
-        });
-        const target = document.body;
-        observer.observe(target, { childList: true, subtree: true });
-        // Send full conversation history every 5s for the reply workbench
+            if (!hasNew) return
+            const newMsgs = adapter.extractMessages(partition)
+            newMsgs.forEach((m) => electron_1.ipcRenderer.send('chat:message', m))
+        })
+        observer.observe(document.body, { childList: true, subtree: true })
+
         setInterval(() => {
-            const history = extractAllMessages();
-            console.log('[ChatStats] sending chat:history with', history.length, 'msgs, partition:', partition);
-            electron_1.ipcRenderer.send('chat:history', { partition, history });
-        }, 5000);
-        // ── Chat list stats scraper ─────────────────────────
-        async function extractChatListStats() {
-            const items = document.querySelectorAll('.chat_item');
-            let groupCount = 0;
-            let totalUnread = 0;
-            const contacts = [];
-            const unreadContacts = [];
-            for (const el of Array.from(items)) {
-                const username = el.getAttribute('data-username') || '';
-                const isGroup = username.startsWith('@@');
-                const nameEl = el.querySelector('.nickname_text');
-                const name = nameEl?.innerText?.trim() || username;
-                // Try specific WeChat web avatar selectors
-                let avatarEl = el.querySelector('img.img, img.avatar, .avatar img, .user-avatar img');
-                if (!avatarEl) {
-                    avatarEl = el.querySelector('img');
-                }
-                let avatarUrl = avatarEl?.getAttribute('src') || avatarEl?.src || '';
-                // Skip File Transfer / 文件传输助手
-                if (name === '文件传输助手' || name === 'File Transfer')
-                    continue;
-                if (isGroup) {
-                    groupCount++;
-                }
-                // Try Angular scope for unread count
-                let unread = 0;
-                let angularFound = false;
-                try {
-                    const angular = window.angular;
-                    if (angular) {
-                        let scope = angular.element(el).scope?.();
-                        if (!scope?.chatContact) {
-                            const childScopeEl = el.querySelector('.ng-scope');
-                            if (childScopeEl) {
-                                scope = angular.element(childScopeEl).scope?.();
-                            }
-                        }
-                        if (!scope?.chatContact && scope?.$parent) {
-                            scope = scope.$parent;
-                        }
-                        if (scope?.chatContact?.NoticeCount != null) {
-                            unread = Number(scope.chatContact.NoticeCount) || 0;
-                            angularFound = true;
-                        }
-                    }
-                }
-                catch (e) {
-                    console.error('[ChatStats] angular scope error:', name, e);
-                }
-                // DOM fallback: detect unread badges / red dots
-                if (unread === 0) {
-                    const badgeNew = el.querySelector('.web_wechat_reddot_bignew, [class*="reddot_big"]');
-                    const badgeDot = el.querySelector('.web_wechat_reddot, [class*="reddot"]');
-                    if (badgeNew) {
-                        const text = badgeNew.textContent?.trim() || '';
-                        unread = text ? parseInt(text, 10) || 1 : 1;
-                    }
-                    else if (badgeDot) {
-                        unread = 1;
-                    }
-                }
-                if (unread > 0) {
-                    console.log('[ChatStats] unread:', name, unread, angularFound ? 'angular' : 'dom');
-                }
-                // Convert avatar URL to base64 data URL using webview session cookies
-                let avatar = '';
-                if (avatarUrl && !avatarUrl.startsWith('data:')) {
-                    try {
-                        const res = await fetch(avatarUrl);
-                        if (res.ok) {
-                            const blob = await res.blob();
-                            avatar = await new Promise((resolve) => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve(reader.result);
-                                reader.readAsDataURL(blob);
-                            });
-                        }
-                    }
-                    catch (e) {
-                        console.log('[ChatStats] avatar fetch failed for', name, e);
-                    }
-                }
-                else {
-                    avatar = avatarUrl;
-                }
-                contacts.push({ name, isGroup, unread, avatar });
-                if (unread > 0) {
-                    totalUnread += unread;
-                    unreadContacts.push({ name, isGroup, unread, avatar });
-                }
-            }
-            return {
-                partition,
-                totalCount: contacts.length,
-                groupCount,
-                userCount: contacts.length - groupCount,
-                totalUnread,
-                contacts,
-                unreadContacts,
-            };
-        }
-        // Monitor toggle state — defaults to false (off)
-        let monitoringEnabled = false;
-        // Listen for monitor toggle commands from renderer
+            const history = adapter.extractAllMessages(partition)
+            console.log('[ChatStats] sending chat:history with', history.length, 'msgs, partition:', partition)
+            electron_1.ipcRenderer.send('chat:history', { partition, history })
+        }, 5000)
+
+        // ── Chat list stats scraper ────────────────────────
+        let monitoringEnabled = false
+
         electron_1.ipcRenderer.on('chat:monitor', (_event, payload) => {
-            monitoringEnabled = payload.enabled;
-            console.log('[ChatStats] monitoring enabled =', monitoringEnabled);
-            // Trigger an immediate scan when turned on
+            monitoringEnabled = payload.enabled
+            console.log('[ChatStats] monitoring enabled =', monitoringEnabled)
             if (monitoringEnabled) {
-                void extractChatListStats().then((stats) => {
-                    console.log('[ChatStats] immediate scan', stats);
-                    if (stats.totalCount > 0) {
-                        electron_1.ipcRenderer.send('chat:stats', stats);
+                void adapter.extractChatListStats(partition).then((stats) => {
+                    console.log('[ChatStats] immediate scan', stats)
+                    if (stats && stats.totalCount > 0) {
+                        electron_1.ipcRenderer.send('chat:stats', stats)
                     }
-                });
+                })
             }
-        });
-        // Send stats periodically (only when monitoring is enabled)
+        })
+
         setInterval(async () => {
-            if (!monitoringEnabled)
-                return;
-            const stats = await extractChatListStats();
-            console.log('[ChatStats]', stats);
-            if (stats.totalCount > 0) {
-                electron_1.ipcRenderer.send('chat:stats', stats);
+            if (!monitoringEnabled) return
+            const stats = await adapter.extractChatListStats(partition)
+            console.log('[ChatStats]', stats)
+            if (stats && stats.totalCount > 0) {
+                electron_1.ipcRenderer.send('chat:stats', stats)
             }
-        }, 5000);
-        // Listen for reply commands from main/renderer
-        electron_1.ipcRenderer.on('chat:reply', (_event, payload) => {
-            // WeChat Web specific selectors first, then generic fallbacks
-            let input = document.querySelector('#editArea[contenteditable="true"]');
-            if (!input) input = document.querySelector('.edit_area [contenteditable="true"]');
-            if (!input) input = document.querySelector('textarea[placeholder*="输入"], textarea[placeholder*="message"], textarea[placeholder*="reply"], .editor textarea, .chat-input textarea, [contenteditable="true"]');
-
-            if (!input) {
-                console.log('[ChatStats] reply: no input found');
-                return;
-            }
-
-            console.log('[ChatStats] reply: input found', input.tagName, input.className, input.id);
-
-            // Set content
-            if (input.tagName === 'TEXTAREA') {
-                input.value = payload.content;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            } else if (input.isContentEditable) {
-                input.focus();
-                document.execCommand('selectAll', false, undefined);
-                document.execCommand('insertText', false, payload.content);
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-
-            // Delay to let app process input before sending
-            setTimeout(() => {
-                // WeChat Web send button is often an <a> tag
-                let sendBtn = document.querySelector('a.btn_send, a[class*="send"], .btn_send, button[class*="send"], button[class*="submit"], .send-btn, [class*="send-message"]');
-                if (!sendBtn) {
-                    sendBtn = input?.closest('form')?.querySelector('button, a[class*="send"]');
-                }
-
-                if (sendBtn) {
-                    sendBtn.click();
-                    console.log('[ChatStats] reply: clicked send button');
-                    return;
-                }
-
-                // Fallback: simulate Enter key with full KeyboardEvent init
-                input.focus();
-                const keyOptions = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-                input.dispatchEvent(new KeyboardEvent('keydown', keyOptions));
-                input.dispatchEvent(new KeyboardEvent('keypress', keyOptions));
-                input.dispatchEvent(new KeyboardEvent('keyup', keyOptions));
-                console.log('[ChatStats] reply: triggered Enter key');
-            }, 300);
-        });
+        }, 5000)
     }
     catch (e) {
-        console.error('[AutoReply] scraper init error:', e);
+        console.error('[AutoReply] scraper init error:', e)
     }
 }
 if (document.readyState === 'loading') {
