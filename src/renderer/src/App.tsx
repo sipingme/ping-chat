@@ -209,10 +209,12 @@ export function App(): JSX.Element {
 
   /* ── Auto Reply State ── */
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
+  const [autoReplyMode, setAutoReplyMode] = useState<'global' | 'single'>('global')
   const [monitoringEnabled, setMonitoringEnabled] = useState(false)
   const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
   const [autoReplyProcessing, setAutoReplyProcessing] = useState(false)
   const [chatStats, setChatStats] = useState<{ partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null>(null)
+  const [autoReplyTarget, setAutoReplyTarget] = useState('')
   const [autoReplyConfig, setAutoReplyConfig] = useState({
     apiKey: '',
     endpoint: 'https://api.openai.com/v1/chat/completions',
@@ -253,6 +255,10 @@ export function App(): JSX.Element {
   autoReplyConfigRef.current = autoReplyConfig
   const autoReplyEnabledRef = useRef(autoReplyEnabled)
   autoReplyEnabledRef.current = autoReplyEnabled
+  const autoReplyModeRef = useRef(autoReplyMode)
+  autoReplyModeRef.current = autoReplyMode
+  const autoReplyTargetRef = useRef(autoReplyTarget)
+  autoReplyTargetRef.current = autoReplyTarget
   const processedReplyKeys = useRef(new Set<string>())
   const [processedCount, setProcessedCount] = useState(0)
 
@@ -262,6 +268,11 @@ export function App(): JSX.Element {
     if (!lastMsg || !lastMsg.isFromUser) return
     const key = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
     if (processedReplyKeys.current.has(key)) return
+    // Skip group chat messages
+    const contact = chatStats?.contacts.find((c) => c.name === lastMsg.sender)
+    if (contact?.isGroup) return
+    // Single mode: only process messages from the selected target
+    if (autoReplyModeRef.current === 'single' && lastMsg.sender !== autoReplyTargetRef.current) return
     processedReplyKeys.current.add(key)
     setProcessedCount((c) => c + 1)
 
@@ -449,6 +460,10 @@ export function App(): JSX.Element {
               onUpdateConfig={(updates) => setAutoReplyConfig((prev) => ({ ...prev, ...updates }))}
               onSendReply={(partition, content) => void window.pingChat.sendReply(partition, content)}
               chatStats={chatStats}
+              autoReplyTarget={autoReplyTarget}
+              setAutoReplyTarget={setAutoReplyTarget}
+              autoReplyMode={autoReplyMode}
+              setAutoReplyMode={setAutoReplyMode}
             />
           )}
           <RightToolBar activeTool={activeRightTool} onSelectTool={setActiveRightTool} disabled={!activeSession} autoReplyProcessing={autoReplyProcessing} />
@@ -1378,6 +1393,10 @@ function AutoReplyPanel({
   onUpdateConfig,
   onSendReply,
   chatStats,
+  autoReplyTarget,
+  setAutoReplyTarget,
+  autoReplyMode,
+  setAutoReplyMode,
 }: {
   session?: ChatSession
   onClose?: () => void
@@ -1393,21 +1412,47 @@ function AutoReplyPanel({
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
   chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
+  autoReplyTarget: string
+  setAutoReplyTarget: (v: string) => void
+  autoReplyMode: 'global' | 'single'
+  setAutoReplyMode: (v: 'global' | 'single') => void
 }): JSX.Element {
   const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model'>('monitor')
   const [generating, setGenerating] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
-  const [autoReplyTarget, setAutoReplyTarget] = useState('')
   const [showUserList, setShowUserList] = useState(false)
   const [showGroupList, setShowGroupList] = useState(false)
+  const [generatedReply, setGeneratedReply] = useState('')
+  const [workbenchGenerating, setWorkbenchGenerating] = useState(false)
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
+  const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const unsub = window.pingChat.onChatHistory((payload) => {
+      if (!session || payload.partition === session.partition || payload.partition === '') {
+        setChatHistory(payload.history.map((m) => ({ ...m, partition: payload.partition })))
+      }
+    })
+    return unsub
+  }, [session?.partition])
 
   useEffect(() => {
     setReplyTarget('')
     setAutoReplyTarget('')
     setManualReply('')
+    setContactAvatarMap({})
   }, [session?.id])
+
+  // Auto-clear autoReplyTarget if it points to a group chat
+  useEffect(() => {
+    if (!autoReplyTarget || !chatStats) return
+    const contact = chatStats.contacts.find((c) => c.name === autoReplyTarget)
+    if (contact?.isGroup) {
+      setAutoReplyTarget('')
+    }
+  }, [chatStats, autoReplyTarget])
 
   useEffect(() => {
     if (!window.pingChat.onContactClicked) return
@@ -1415,10 +1460,20 @@ function AutoReplyPanel({
       if (!session) return
       if (payload.partition !== session.partition && payload.partition !== '') return
       setReplyTarget(payload.name)
-      handleScrollTo('overview')
+      if (payload.avatar) {
+        setContactAvatarMap((prev) => ({ ...prev, [payload.name]: payload.avatar }))
+      }
+      // When already on auto-reply tab, also update auto-reply target so the banner changes
+      if (activeTab === 'reply') {
+        setAutoReplyTarget(payload.name)
+      }
+      // Only switch to overview if not currently on the reply tab
+      if (activeTab !== 'reply') {
+        handleScrollTo('overview')
+      }
     })
     return () => { unlisten() }
-  }, [session?.partition])
+  }, [session?.partition, activeTab])
 
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
@@ -1432,6 +1487,43 @@ function AutoReplyPanel({
   }, [messages])
   const senders = Object.keys(grouped)
 
+  const workbenchTarget = useMemo(() => {
+    if (autoReplyTarget) return autoReplyTarget
+    const lastUserMsg = [...chatHistory].reverse().find((m) => m.isFromUser)
+    return lastUserMsg?.sender || ''
+  }, [autoReplyTarget, chatHistory])
+
+  const pendingConversation = useMemo<ChatMessage[]>(() => {
+    if (!workbenchTarget || chatHistory.length === 0) return []
+    // Find index of my last reply
+    let myLastReplyIndex = -1
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      if (!chatHistory[i].isFromUser) {
+        myLastReplyIndex = i
+        break
+      }
+    }
+    // Find last user message from workbenchTarget
+    let lastUserMsgIndex = -1
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      if (chatHistory[i].sender === workbenchTarget && chatHistory[i].isFromUser) {
+        lastUserMsgIndex = i
+        break
+      }
+    }
+    // No pending messages if no user message or already replied
+    if (lastUserMsgIndex === -1 || lastUserMsgIndex <= myLastReplyIndex) return []
+    // Trace back to after my last reply
+    let startIndex = 0
+    for (let i = lastUserMsgIndex - 1; i >= 0; i--) {
+      if (!chatHistory[i].isFromUser) {
+        startIndex = i + 1
+        break
+      }
+    }
+    return chatHistory.slice(startIndex, lastUserMsgIndex + 1)
+  }, [chatHistory, workbenchTarget])
+
   useLayoutEffect(() => {
     const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
     if (activeBtn && tabsRef.current) {
@@ -1442,6 +1534,10 @@ function AutoReplyPanel({
 
   const handleScrollTo = (tab: 'monitor' | 'overview' | 'reply' | 'model'): void => {
     setActiveTab(tab)
+    // When switching to auto-reply in single mode, auto-set target from quick-reply target if available
+    if (tab === 'reply' && autoReplyMode === 'single' && !autoReplyTarget && replyTarget) {
+      setAutoReplyTarget(replyTarget)
+    }
   }
 
   const handleGenerate = async (targetSender: string) => {
@@ -1472,6 +1568,36 @@ function AutoReplyPanel({
       console.error('Generate reply failed:', e)
     }
     setGenerating(false)
+  }
+
+  const handleWorkbenchGenerate = async (targetSender: string) => {
+    if (!config.apiKey || workbenchGenerating || !targetSender) return
+    setWorkbenchGenerating(true)
+    try {
+      let history = grouped[targetSender] || []
+      if (config.contextRounds > 0) {
+        history = history.slice(-config.contextRounds * 2)
+      }
+      const fullSystem = buildSystemPrompt(config)
+
+      const msgs = [
+        { role: 'system', content: fullSystem },
+        ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
+      ]
+      const res = await fetch(config.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
+      })
+      const data = await res.json()
+      const reply = data.choices?.[0]?.message?.content
+      if (reply) {
+        setGeneratedReply(reply)
+      }
+    } catch (e) {
+      console.error('[Workbench] AI generation failed:', e)
+    }
+    setWorkbenchGenerating(false)
   }
 
   const handleManualSend = () => {
@@ -1544,7 +1670,7 @@ function AutoReplyPanel({
                     </div>
                     <div style={{ display: 'flex', gap: 2 }}>
                       <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyMode('single'); setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
                     </div>
                   </div>
                 ))}
@@ -1564,7 +1690,6 @@ function AutoReplyPanel({
                     </div>
                     <div style={{ display: 'flex', gap: 2 }}>
                       <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
                     </div>
                   </div>
                 ))}
@@ -1603,7 +1728,6 @@ function AutoReplyPanel({
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
                 </div>
               </div>
             ))}
@@ -1622,7 +1746,6 @@ function AutoReplyPanel({
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="自动回复" onClick={() => { setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
                 </div>
               </div>
             ))}
@@ -1659,11 +1782,32 @@ function AutoReplyPanel({
 
         </>)} {activeTab === 'overview' && (<>
         {replyTarget && (
-          <div style={{ marginTop: 20, marginBottom: 12, padding: '10px 12px', borderRadius: 6, border: '1px dashed #ff8c42', borderWidth: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#ff8c42' }}>正在回复: {replyTarget}</span>
-            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#ff8c42', border: 'none', cursor: 'pointer' }} onClick={() => { setReplyTarget(''); setManualReply(''); handleScrollTo('monitor') }}><X size={14} /></button>
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#143324', border: '1px solid #04c768', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {(() => {
+                const contact = chatStats?.contacts.find((c) => c.name === replyTarget)
+                const avatar = contact?.avatar || contactAvatarMap[replyTarget]
+                if (avatar) {
+                  return (
+                    <>
+                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
+                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
+                    </>
+                  )
+                }
+                return <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
+              })()}
+              <span style={{ fontSize: 12, color: '#04c768', fontWeight: 600 }}>正在回复: {replyTarget}</span>
+            </div>
+            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#04c768', border: 'none', cursor: 'pointer' }} onClick={() => { setReplyTarget(''); setManualReply(''); handleScrollTo('monitor') }}><X size={14} /></button>
           </div>
         )}
+        {!replyTarget && (
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#1a1f23', border: '1px dashed #3a4147', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: '#8c96a1' }}>请从监控面板的用户列表中选择要快捷回复的目标用户</span>
+          </div>
+        )}
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         <h3 className="proxy-section-title" id="reply-overview-section">快捷回复</h3>
         {replyTarget && manualReply && (
           <div style={{ marginTop: 12 }}>
@@ -1801,17 +1945,136 @@ function AutoReplyPanel({
         )}
 
         </>)} {activeTab === 'reply' && (<>
+        {autoReplyMode === 'single' && autoReplyTarget && !chatStats?.contacts.find((c) => c.name === autoReplyTarget)?.isGroup && (
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#143324', border: '1px solid #04c768', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {(() => {
+                const contact = chatStats?.contacts.find((c) => c.name === autoReplyTarget)
+                const avatar = contact?.avatar || contactAvatarMap[autoReplyTarget]
+                if (avatar) {
+                  return (
+                    <>
+                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
+                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
+                    </>
+                  )
+                }
+                return <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
+              })()}
+              <span style={{ fontSize: 12, color: '#04c768', fontWeight: 600 }}>正在自动回复: {autoReplyTarget}</span>
+            </div>
+            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#04c768', border: 'none', cursor: 'pointer' }} onClick={() => setAutoReplyTarget('')}><X size={14} /></button>
+          </div>
+        )}
+        {autoReplyMode === 'single' && !autoReplyTarget && (
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#1a1f23', border: '1px dashed #3a4147', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: '#8c96a1' }}>请从监控面板的用户列表中选择要自动回复的目标用户</span>
+          </div>
+        )}
+        {/* ── 回复工作台 ── */}
+        {enabled && (
+          <>
+            <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+            <h4 style={{ fontSize: 16, margin: '0 0 20px', fontWeight: 700 }}>回复工作台</h4>
+
+            {pendingConversation.length > 0 && (
+              <>
+                {/* 聊天记录（气泡样式） */}
+                <div style={{ maxHeight: 280, overflow: 'auto', padding: '10px', background: '#1c2024', borderRadius: 6, marginBottom: 12, border: '1px solid #2c3135' }}>
+                  {pendingConversation.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: m.isFromUser ? 'flex-start' : 'flex-end', marginBottom: 10, gap: 8, alignItems: 'flex-end' }}>
+                      {m.isFromUser && (
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>
+                          {m.sender.charAt(0)}
+                        </div>
+                      )}
+                      <div style={{ maxWidth: '70%', padding: '8px 10px', borderRadius: m.isFromUser ? '4px 10px 10px 10px' : '10px 4px 10px 10px', background: m.isFromUser ? '#252a2e' : '#143324', color: m.isFromUser ? '#f3f5f7' : '#04c768', fontSize: 12, lineHeight: 1.5, wordBreak: 'break-all' }}>
+                        {m.content}
+                      </div>
+                      {!m.isFromUser && (
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#04c768', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#ffffff', fontWeight: 700 }}>
+                          AI
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* 生成回复按钮 */}
+                <button
+                  className="apply-action"
+                  style={{ width: '100%', height: 32, fontSize: 12, marginBottom: 12 }}
+                  onClick={() => handleWorkbenchGenerate(workbenchTarget)}
+                  disabled={workbenchGenerating || !config.apiKey}
+                >
+                  {workbenchGenerating ? '生成中…' : '生成 AI 回复'}
+                </button>
+
+                {/* AI 生成的回复 */}
+                {generatedReply && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 6 }}>AI 生成的回复</div>
+                    <textarea
+                      className="proxy-textarea"
+                      rows={3}
+                      value={generatedReply}
+                      onChange={(e) => setGeneratedReply(e.target.value)}
+                      style={{ fontSize: 12 }}
+                    />
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <button
+                        className="apply-action"
+                        style={{ flex: 1, height: 28, fontSize: 11 }}
+                        onClick={() => { if (session) { onSendReply(session.partition, generatedReply); setGeneratedReply('') } }}
+                      >
+                        发送
+                      </button>
+                      <button
+                        className="secondary-action"
+                        style={{ flex: 1, height: 28, fontSize: 11 }}
+                        onClick={() => setGeneratedReply('')}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {pendingConversation.length === 0 && (
+              <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
+                <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无待回复的聊天记录</span>
+              </div>
+            )}
+          </>
+        )}
+
+        {autoReplyMode === 'single' && !autoReplyTarget && (
+          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        )}
         <h3 className="proxy-section-title" id="reply-reply-section">自动回复</h3>
         <ProxyField label="自动处理消息">
           <Switch enabled={enabled} onChange={onToggleEnabled} />
         </ProxyField>
         <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
-        {autoReplyTarget && (
-          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: '#f3f5f7' }}>正在自动回复: {autoReplyTarget}</span>
-            <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: '#f3f5f7', border: 'none', cursor: 'pointer' }} onClick={() => setAutoReplyTarget('')}><X size={14} /></button>
-          </div>
-        )}
+        <ProxyField label="回复范围">
+          <CustomSelect
+            placeholder="选择范围"
+            value={autoReplyMode}
+            options={[
+              { value: 'global', label: '全局（所有用户）' },
+              { value: 'single', label: '单用户（指定用户）' },
+            ]}
+            onChange={(val) => {
+              setAutoReplyMode(val as 'global' | 'single')
+              if (val === 'single' && replyTarget && !autoReplyTarget) {
+                setAutoReplyTarget(replyTarget)
+              }
+            }}
+          />
+        </ProxyField>
+        <div className="proxy-note">全局模式下对所有用户生效，单用户模式仅对选定的用户生效</div>
 
         <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         <h4 style={{ fontSize: 16, margin: '0 0 20px', fontWeight: 700 }}>回复风格</h4>
@@ -2143,8 +2406,6 @@ function AutoReplyPanel({
             <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.contextRounds || '无'}</span>
           </div>
         </ProxyField>
-        <div className="proxy-note">AI 记忆多少轮对话历史，0 表示不限制</div>
-
         </>)} {activeTab === 'model' && (<>
         <h3 className="proxy-section-title" id="reply-model-section">大模型设置</h3>
         <ProxyField label="模型" className="proxy-field--top">

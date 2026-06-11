@@ -29,10 +29,15 @@ const api = {
     ipcRenderer.on('chat:stats', handler)
     return () => ipcRenderer.removeListener('chat:stats', handler)
   },
-  onContactClicked: (callback: (payload: { partition: string; name: string }) => void) => {
+  onContactClicked: (callback: (payload: { partition: string; name: string; avatar?: string }) => void) => {
     const handler = (_event: any, payload: any) => callback(payload)
     ipcRenderer.on('chat:contact-clicked', handler)
     return () => ipcRenderer.removeListener('chat:contact-clicked', handler)
+  },
+  onChatHistory: (callback: (payload: { partition: string; history: Array<{ sender: string; content: string; isFromUser: boolean; timestamp: number }> }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('chat:history', handler)
+    return () => ipcRenderer.removeListener('chat:history', handler)
   },
 }
 

@@ -778,15 +778,60 @@ function startAutoReplyScraper(partition) {
     try {
         // Register this webview with main process
         electron_1.ipcRenderer.invoke('chat:register', partition);
-        // Listen for clicks on the chat list to notify renderer
+        // Listen for clicks on the chat list to notify renderer (both users and groups)
         document.addEventListener('click', (e) => {
-            const chatItem = e.target?.closest?.('.chat_item')
+            const target = e.target
+            const chatItem = target?.closest?.('.chat_item')
+            console.log('[ChatStats] click detected, chatItem found:', !!chatItem, 'target class:', target?.className)
             if (chatItem) {
                 const nameEl = chatItem.querySelector('.nickname_text')
                 const name = nameEl?.innerText?.trim()
+                let avatarEl = chatItem.querySelector('img.img, img.avatar, .avatar img, .user-avatar img')
+                if (!avatarEl) {
+                    avatarEl = chatItem.querySelector('img')
+                }
+                console.log('[ChatStats] avatarEl found:', !!avatarEl, 'classes:', avatarEl?.className)
+                let avatarUrl = avatarEl?.getAttribute('data-src')
+                    || avatarEl?.getAttribute('data-original')
+                    || avatarEl?.getAttribute('src')
+                    || avatarEl?.src
+                    || ''
+                // Convert relative URL to absolute
+                if (avatarUrl && !avatarUrl.startsWith('http') && !avatarUrl.startsWith('//')) {
+                    const origin = window.location.origin
+                    avatarUrl = origin + (avatarUrl.startsWith('/') ? avatarUrl : '/' + avatarUrl)
+                }
+                console.log('[ChatStats] name:', name, 'avatarUrl:', avatarUrl?.slice(0, 80))
                 if (name) {
-                    electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name })
-                    console.log('[ChatStats] contact clicked:', name)
+                    // Try to convert image to base64 via canvas
+                    if (avatarUrl) {
+                        const img = new Image()
+                        img.crossOrigin = 'anonymous'
+                        img.onload = () => {
+                            try {
+                                const canvas = document.createElement('canvas')
+                                canvas.width = img.naturalWidth || 64
+                                canvas.height = img.naturalHeight || 64
+                                const ctx = canvas.getContext('2d')
+                                if (ctx) {
+                                    ctx.drawImage(img, 0, 0)
+                                    const base64 = canvas.toDataURL('image/png')
+                                    console.log('[ChatStats] base64 success, length:', base64.length)
+                                    electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: base64 })
+                                }
+                            } catch (err) {
+                                console.log('[ChatStats] canvas error:', err)
+                                electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
+                            }
+                        }
+                        img.onerror = () => {
+                            console.log('[ChatStats] crossOrigin image load failed, sending URL')
+                            electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: avatarUrl })
+                        }
+                        img.src = avatarUrl
+                    } else {
+                        electron_1.ipcRenderer.send('chat:contact-clicked', { partition, name, avatar: '' })
+                    }
                 }
             }
         })
@@ -905,6 +950,11 @@ function startAutoReplyScraper(partition) {
         });
         const target = document.body;
         observer.observe(target, { childList: true, subtree: true });
+        // Send full conversation history every 5s for the reply workbench
+        setInterval(() => {
+            const history = extractMessages();
+            electron_1.ipcRenderer.send('chat:history', { partition, history });
+        }, 5000);
         // ── Chat list stats scraper ─────────────────────────
         async function extractChatListStats() {
             const items = document.querySelectorAll('.chat_item');

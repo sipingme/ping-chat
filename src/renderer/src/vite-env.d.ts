@@ -23,7 +23,10 @@ interface Window {
       callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
     ) => () => void
     onContactClicked: (
-      callback: (payload: { partition: string; name: string }) => void
+      callback: (payload: { partition: string; name: string; avatar?: string }) => void
+    ) => () => void
+    onChatHistory: (
+      callback: (payload: { partition: string; history: Array<{ sender: string; content: string; isFromUser: boolean; timestamp: number }> }) => void
     ) => () => void
   }
 }

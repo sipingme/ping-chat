@@ -213,6 +213,13 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.on('chat:history', (_event, payload: { partition: string; history: Array<{ sender: string; content: string; isFromUser: boolean; timestamp: number }> }) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('chat:history', payload)
+    }
+  })
+
   ipcMain.on('chat:stats', (_event, payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number }> }) => {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (mainWindow) {
@@ -220,7 +227,7 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.on('chat:contact-clicked', (_event, payload: { partition: string; name: string }) => {
+  ipcMain.on('chat:contact-clicked', (_event, payload: { partition: string; name: string; avatar?: string }) => {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (mainWindow) {
       mainWindow.webContents.send('chat:contact-clicked', payload)
