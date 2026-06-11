@@ -216,10 +216,11 @@ export function App(): JSX.Element {
   const [chatStats, setChatStats] = useState<{ partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null>(null)
   const [autoReplyTarget, setAutoReplyTarget] = useState('')
   const [autoReplyConfig, setAutoReplyConfig] = useState({
-    apiKey: '',
-    endpoint: 'https://api.openai.com/v1/chat/completions',
-    model: 'abab6',
-    systemPrompt: '你是一个友好的客服助手。',
+    // ⚠️ 安全提示：请勿将此 API 密钥提交到 Git 仓库
+    apiKey: 'sk-cp-eEhluB-WZIP6LV2qAJO_TYawZIIiwtcCd7CnA73soACxZygFWJx2JycyO7l_100a5FnOh6O0-FPojZzbibf02yw6SAF9jAQg6PGtyew3IDvMKJpJ14QZKwY',
+    endpoint: 'https://api.minimaxi.com/v1/chat/completions',
+    model: 'MiniMax-M2.7',
+    systemPrompt: '你是一个热情友好的客服助手，善于用活泼亲切的语气与用户沟通。',
     tone: '热情',
     length: '简短',
     salutation: '亲',
@@ -233,6 +234,10 @@ export function App(): JSX.Element {
     temperature: 0.7,
     maxTokens: 0,
     contextRounds: 10,
+    topP: 1.0,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+    autoSendSingle: true,
   })
 
   useEffect(() => {
@@ -271,8 +276,8 @@ export function App(): JSX.Element {
     // Skip group chat messages
     const contact = chatStats?.contacts.find((c) => c.name === lastMsg.sender)
     if (contact?.isGroup) return
-    // Single mode: only process messages from the selected target
-    if (autoReplyModeRef.current === 'single' && lastMsg.sender !== autoReplyTargetRef.current) return
+    // Single mode auto-reply is handled by AutoReplyPanel workbench
+    if (autoReplyModeRef.current === 'single') return
     processedReplyKeys.current.add(key)
     setProcessedCount((c) => c + 1)
 
@@ -308,11 +313,26 @@ export function App(): JSX.Element {
         const res = await fetch(config.endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-          body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
+          body: JSON.stringify({
+              model: config.model,
+              messages: msgs,
+              temperature: config.temperature,
+              ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
+              ...(config.topP < 1 ? { top_p: config.topP } : {}),
+              ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
+              ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
+            }),
         })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error?.message || `请求失败 (${res.status})`)
+        }
         const data = await res.json()
-        const reply = data.choices?.[0]?.message?.content
+        let reply = data.choices?.[0]?.message?.content
         if (reply) {
+          reply = reply.replace(/<think(?:ing)?>.*?<\/think(?:ing)?>/gs, '')
+          reply = reply.replace(/<reason(?:ing)?>.*?<\/reason(?:ing)?>/gs, '')
+          reply = reply.trim()
           await window.pingChat.sendReply(lastMsg.partition, reply)
         }
       } catch (e) {
@@ -482,10 +502,9 @@ function TitleBar({ onlineCount, offlineCount }: { onlineCount: number; offlineC
         <button className="traffic maximize" onClick={() => window.pingChat?.maximize()} />
       </div>
       <div className="brand-block">
-        <span className="brand-name">PingChat 0.2.0</span>
+        <span className="brand-name">PingChat 0.2.4</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
-        <span>离线: <b className="red">{offlineCount}</b></span>
-        <span className="route-pill">全球专线 <b>409ms</b></span>
+        <span>离线: <b className="red">0</b></span>
         <button className="tiny-icon"><RefreshCw size={12} /></button>
       </div>
       <div className="title-spacer" />
@@ -1375,6 +1394,7 @@ function buildSystemPrompt(config: { systemPrompt: string; role: string; tone: s
   }
   if (salMap[config.salutation]) ruleParts.push(salMap[config.salutation])
   ruleParts.push(config.allowEmoji ? '可以适当使用表情符号' : '不要使用表情符号')
+  ruleParts.push('直接输出回复内容，不要输出任何思考过程、分析、推理，不要输出任何 <thinking>、<reasoning> 等标签')
   return config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
 }
 
@@ -1408,7 +1428,7 @@ function AutoReplyPanel({
   processedCount: number
   messages: ChatMessage[]
   onClearMessages: () => void
-  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number }
+  config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number; topP: number; frequencyPenalty: number; presencePenalty: number; autoSendSingle: boolean }
   onUpdateConfig: (updates: Partial<typeof config>) => void
   onSendReply: (partition: string, content: string) => void
   chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
@@ -1425,14 +1445,21 @@ function AutoReplyPanel({
   const [showGroupList, setShowGroupList] = useState(false)
   const [generatedReply, setGeneratedReply] = useState('')
   const [workbenchGenerating, setWorkbenchGenerating] = useState(false)
+  const [workbenchPrompt, setWorkbenchPrompt] = useState('')
+  const [workbenchError, setWorkbenchError] = useState('')
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
+  const workbenchTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const unsub = window.pingChat.onChatHistory((payload) => {
+      console.log('[Renderer] chat:history received', payload.history.length, 'msgs, partition:', payload.partition, 'session partition:', session?.partition)
       if (!session || payload.partition === session.partition || payload.partition === '') {
+        console.log('[Renderer] updating chatHistory with', payload.history.length, 'messages')
         setChatHistory(payload.history.map((m) => ({ ...m, partition: payload.partition })))
+      } else {
+        console.log('[Renderer] chat:history ignored, partition mismatch')
       }
     })
     return unsub
@@ -1461,7 +1488,7 @@ function AutoReplyPanel({
       if (payload.partition !== session.partition && payload.partition !== '') return
       setReplyTarget(payload.name)
       if (payload.avatar) {
-        setContactAvatarMap((prev) => ({ ...prev, [payload.name]: payload.avatar }))
+        setContactAvatarMap((prev) => ({ ...prev, [payload.name]: payload.avatar ?? '' }))
       }
       // When already on auto-reply tab, also update auto-reply target so the banner changes
       if (activeTab === 'reply') {
@@ -1503,10 +1530,10 @@ function AutoReplyPanel({
         break
       }
     }
-    // Find last user message from workbenchTarget
+    // Find last user message (chatHistory is from current chat window)
     let lastUserMsgIndex = -1
     for (let i = chatHistory.length - 1; i >= 0; i--) {
-      if (chatHistory[i].sender === workbenchTarget && chatHistory[i].isFromUser) {
+      if (chatHistory[i].isFromUser) {
         lastUserMsgIndex = i
         break
       }
@@ -1523,6 +1550,55 @@ function AutoReplyPanel({
     }
     return chatHistory.slice(startIndex, lastUserMsgIndex + 1)
   }, [chatHistory, workbenchTarget])
+
+  const hadPendingRef = useRef(false)
+  useEffect(() => {
+    if (hadPendingRef.current && pendingConversation.length === 0) {
+      setWorkbenchPrompt('')
+    }
+    hadPendingRef.current = pendingConversation.length > 0
+  }, [pendingConversation.length])
+
+  useEffect(() => {
+    const el = workbenchTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = el.scrollHeight + 'px'
+  }, [workbenchPrompt])
+
+  // Single-mode auto-reply: when new pending messages arrive, auto-generate and send
+  const singleAutoReplyKeyRef = useRef('')
+  const isAutoSendingRef = useRef(false)
+  const prevPendingLenRef = useRef(0)
+  useEffect(() => {
+    const hasNewPending = pendingConversation.length > 0 && prevPendingLenRef.current === 0
+    prevPendingLenRef.current = pendingConversation.length
+    if (!hasNewPending) return
+    if (!enabled || autoReplyMode !== 'single' || !autoReplyTarget || !session) return
+    if (workbenchGenerating || isAutoSendingRef.current) return
+
+    const key = pendingConversation.map((m) => m.sender + ':' + m.content + ':' + m.timestamp).join('|')
+    if (singleAutoReplyKeyRef.current === key) return
+    singleAutoReplyKeyRef.current = key
+
+    isAutoSendingRef.current = true
+    void (async () => {
+      try {
+        const reply = await handleWorkbenchGenerate(autoReplyTarget, pendingConversation)
+        if (!reply || !session) return
+        if (config.autoSendSingle) {
+          if (config.delaySeconds > 0) {
+            await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
+          }
+          onSendReply(session.partition, reply)
+          setWorkbenchPrompt('')
+        }
+        // When autoSendSingle is false, reply is already set in workbenchPrompt by handleWorkbenchGenerate
+      } finally {
+        isAutoSendingRef.current = false
+      }
+    })()
+  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSendSingle, onSendReply])
 
   useLayoutEffect(() => {
     const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
@@ -1557,7 +1633,15 @@ function AutoReplyPanel({
       const res = await fetch(config.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
+        body: JSON.stringify({
+              model: config.model,
+              messages: msgs,
+              temperature: config.temperature,
+              ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
+              ...(config.topP < 1 ? { top_p: config.topP } : {}),
+              ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
+              ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
+            }),
       })
       const data = await res.json()
       const reply = data.choices?.[0]?.message?.content
@@ -1570,34 +1654,63 @@ function AutoReplyPanel({
     setGenerating(false)
   }
 
-  const handleWorkbenchGenerate = async (targetSender: string) => {
-    if (!config.apiKey || workbenchGenerating || !targetSender) return
+  const handleWorkbenchGenerate = async (targetSender: string, customHistory?: ChatMessage[]): Promise<string | null> => {
+    if (workbenchGenerating) return null
+    if (!config.apiKey) {
+      setWorkbenchError('请先在大模型设置中配置 API 密钥')
+      return null
+    }
     setWorkbenchGenerating(true)
+    setWorkbenchError('')
     try {
-      let history = grouped[targetSender] || []
+      let history = customHistory ?? grouped[targetSender] ?? []
       if (config.contextRounds > 0) {
         history = history.slice(-config.contextRounds * 2)
       }
-      const fullSystem = buildSystemPrompt(config)
+      const fullSystem = buildSystemPrompt(config) + (workbenchPrompt.trim() ? '\n\n额外要求：' + workbenchPrompt.trim() : '')
 
       const msgs = [
         { role: 'system', content: fullSystem },
         ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
       ]
+      if (history.length === 0) {
+        msgs.push({ role: 'user', content: '请直接输出一段打招呼的开场白，不要输出任何思考过程或分析。' })
+      }
       const res = await fetch(config.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages: msgs, temperature: config.temperature, ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}) }),
+        body: JSON.stringify({
+              model: config.model,
+              messages: msgs,
+              temperature: config.temperature,
+              ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
+              ...(config.topP < 1 ? { top_p: config.topP } : {}),
+              ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
+              ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
+            }),
       })
       const data = await res.json()
-      const reply = data.choices?.[0]?.message?.content
+      if (!res.ok) {
+        throw new Error(data.error?.message || `请求失败 (${res.status})`)
+      }
+      let reply = data.choices?.[0]?.message?.content
       if (reply) {
-        setGeneratedReply(reply)
+        // Strip reasoning/thinking tags and their content
+        reply = reply.replace(/<think(?:ing)?>.*?<\/think(?:ing)?>/gs, '')
+        reply = reply.replace(/<reason(?:ing)?>.*?<\/reason(?:ing)?>/gs, '')
+        reply = reply.trim()
+        setWorkbenchPrompt(reply)
+        return reply
+      } else {
+        throw new Error('API 未返回有效回复内容')
       }
     } catch (e) {
       console.error('[Workbench] AI generation failed:', e)
+      setWorkbenchError(e instanceof Error ? e.message : '生成失败，请检查网络或 API 配置')
+      return null
+    } finally {
+      setWorkbenchGenerating(false)
     }
-    setWorkbenchGenerating(false)
   }
 
   const handleManualSend = () => {
@@ -1700,84 +1813,92 @@ function AutoReplyPanel({
 
         {monitoringEnabled && (<>
         <h3 className="proxy-section-title" id="reply-messages-section" style={{ marginTop: 30 }}>消息监控</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>未处理</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{chatStats?.totalUnread ?? messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+        {(!chatStats || (chatStats.totalCount === 0 && messages.length === 0)) ? (
+          <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
+            <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无监控数据，请确保微信已正常登录</span>
           </div>
-          <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-            <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>已处理</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
-          </div>
-        </div>
-
-        {chatStats && chatStats.unreadContacts.length > 0 && (
-          <div style={{ marginBottom: 12 }}>
-            {chatStats.unreadContacts.filter((c) => !c.isGroup).length > 0 && (
-              <div style={{ marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>用户</div>
-            )}
-            {chatStats.unreadContacts.filter((c) => !c.isGroup).map((c, i) => (
-              <div key={`u-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {c.avatar ? (
-                    <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                  )}
-                  <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>未处理</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{chatStats?.totalUnread ?? messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
               </div>
-            ))}
-            {chatStats.unreadContacts.filter((c) => c.isGroup).length > 0 && (
-              <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>群聊</div>
-            )}
-            {chatStats.unreadContacts.filter((c) => c.isGroup).map((c, i) => (
-              <div key={`g-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {c.avatar ? (
-                    <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                  )}
-                  <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {senders.length > 0 && (
-          <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
-        )}
-        {senders.map((sender) => {
-          const msgs = grouped[sender]
-          const last = msgs[msgs.length - 1]
-          return (
-            <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
-                <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
-              </div>
-              <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {last.content}
-              </div>
-              <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
-                  {generating ? '生成中…' : 'AI 回复'}
-                </button>
-                <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('overview') }}>
-                  手动回复
-                </button>
+              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>已处理</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
               </div>
             </div>
-          )
-        })}
+
+            {chatStats && chatStats.unreadContacts.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                {chatStats.unreadContacts.filter((c) => !c.isGroup).length > 0 && (
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>用户</div>
+                )}
+                {chatStats.unreadContacts.filter((c) => !c.isGroup).map((c, i) => (
+                  <div key={`u-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? (
+                        <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                      )}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+                {chatStats.unreadContacts.filter((c) => c.isGroup).length > 0 && (
+                  <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>群聊</div>
+                )}
+                {chatStats.unreadContacts.filter((c) => c.isGroup).map((c, i) => (
+                  <div key={`g-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? (
+                        <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
+                      )}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {senders.length > 0 && (
+              <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
+            )}
+            {senders.map((sender) => {
+              const msgs = grouped[sender]
+              const last = msgs[msgs.length - 1]
+              return (
+                <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
+                    <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {last.content}
+                  </div>
+                  <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
+                      {generating ? '生成中…' : 'AI 回复'}
+                    </button>
+                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('overview') }}>
+                      手动回复
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </>
+        )}
         </>)}
 
         </>)} {activeTab === 'overview' && (<>
@@ -1975,89 +2096,111 @@ function AutoReplyPanel({
         {enabled && (
           <>
             <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-            <h4 style={{ fontSize: 16, margin: '0 0 20px', fontWeight: 700 }}>回复工作台</h4>
+            <h4 style={{ fontSize: 16, margin: '0 0 12px', fontWeight: 700 }}>回复工作台</h4>
+            <div style={{ borderRadius: 8, border: '1px solid #2c3135', background: '#1a1c1e', padding: 12 }}>
 
             {pendingConversation.length > 0 && (
               <>
-                {/* 聊天记录（气泡样式） */}
-                <div style={{ maxHeight: 280, overflow: 'auto', padding: '10px', background: '#1c2024', borderRadius: 6, marginBottom: 12, border: '1px solid #2c3135' }}>
-                  {pendingConversation.map((m, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: m.isFromUser ? 'flex-start' : 'flex-end', marginBottom: 10, gap: 8, alignItems: 'flex-end' }}>
-                      {m.isFromUser && (
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>
-                          {m.sender.charAt(0)}
+                {/* 聊天记录 —— 微信网页版 body 样式 */}
+                <div style={{ maxHeight: 420, overflow: 'auto', padding: '8px', background: '#151719', borderRadius: 6, marginBottom: 12 }}>
+                  {pendingConversation.map((m, i) => {
+                    const avatarSrc = chatStats?.contacts.find((c) => c.name === m.sender)?.avatar || contactAvatarMap[m.sender]
+                    const isSelf = !m.isFromUser
+                    return (
+                      <div key={i} style={{ display: 'flex', justifyContent: isSelf ? 'flex-end' : 'flex-start', marginBottom: 14, gap: 10, alignItems: 'center' }}>
+                        {!isSelf && (
+                          <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: '#3a4147' }}>
+                            {avatarSrc ? (
+                              <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{m.sender.charAt(0)}</div>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', alignItems: isSelf ? 'flex-end' : 'flex-start' }}>
+                          <span style={{ color: '#f3f5f7', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-all' }}>
+                            {m.content}
+                          </span>
                         </div>
-                      )}
-                      <div style={{ maxWidth: '70%', padding: '8px 10px', borderRadius: m.isFromUser ? '4px 10px 10px 10px' : '10px 4px 10px 10px', background: m.isFromUser ? '#252a2e' : '#143324', color: m.isFromUser ? '#f3f5f7' : '#04c768', fontSize: 12, lineHeight: 1.5, wordBreak: 'break-all' }}>
-                        {m.content}
+                        {isSelf && (
+                          <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: '#07c160', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#ffffff', fontWeight: 700 }}>
+                            我
+                          </div>
+                        )}
                       </div>
-                      {!m.isFromUser && (
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#04c768', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#ffffff', fontWeight: 700 }}>
-                          AI
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
-
-                {/* 生成回复按钮 */}
-                <button
-                  className="apply-action"
-                  style={{ width: '100%', height: 32, fontSize: 12, marginBottom: 12 }}
-                  onClick={() => handleWorkbenchGenerate(workbenchTarget)}
-                  disabled={workbenchGenerating || !config.apiKey}
-                >
-                  {workbenchGenerating ? '生成中…' : '生成 AI 回复'}
-                </button>
-
-                {/* AI 生成的回复 */}
-                {generatedReply && (
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 6 }}>AI 生成的回复</div>
-                    <textarea
-                      className="proxy-textarea"
-                      rows={3}
-                      value={generatedReply}
-                      onChange={(e) => setGeneratedReply(e.target.value)}
-                      style={{ fontSize: 12 }}
-                    />
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                      <button
-                        className="apply-action"
-                        style={{ flex: 1, height: 28, fontSize: 11 }}
-                        onClick={() => { if (session) { onSendReply(session.partition, generatedReply); setGeneratedReply('') } }}
-                      >
-                        发送
-                      </button>
-                      <button
-                        className="secondary-action"
-                        style={{ flex: 1, height: 28, fontSize: 11 }}
-                        onClick={() => setGeneratedReply('')}
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                )}
               </>
             )}
 
             {pendingConversation.length === 0 && (
-              <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
-                <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无待回复的聊天记录</span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px 0', marginBottom: 12, gap: 6 }}>
+                <MessageSquare size={18} style={{ color: '#3a4147' }} />
+                <span style={{ fontSize: 12, color: '#5c6670' }}>暂无待回复的聊天记录</span>
               </div>
             )}
+
+            {/* 自定义回复内容 */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: '#5c6670', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <SlidersHorizontal size={11} />
+                自定义回复内容
+              </div>
+              <textarea
+                ref={workbenchTextareaRef}
+                className="proxy-textarea"
+                placeholder="AI 生成的回复内容或手动输入的回复内容..."
+                value={workbenchPrompt}
+                onChange={(e) => setWorkbenchPrompt(e.target.value)}
+                style={{ fontSize: 12, minHeight: 56, borderColor: '#33373d', background: '#151719', resize: 'none', overflow: 'hidden' }}
+              />
+            </div>
+
+            {/* 生成回复按钮 */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="apply-action"
+                style={{ flex: 1, height: 32, fontSize: 12, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                onClick={() => handleWorkbenchGenerate(workbenchTarget)}
+                disabled={workbenchGenerating}
+              >
+                {workbenchGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
+                {workbenchGenerating ? '生成中…' : '生成回复'}
+              </button>
+              <button
+                className="secondary-action"
+                style={{ flex: 1, height: 32, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderColor: '#04c768', color: '#04c768' }}
+                onClick={() => {
+                  if (!session) return
+                  const content = workbenchPrompt.trim()
+                  if (!content) return
+                  onSendReply(session.partition, content)
+                  setWorkbenchPrompt('')
+                }}
+                disabled={!session || !workbenchPrompt.trim()}
+              >
+                <Zap size={12} />
+                直接发送
+              </button>
+            </div>
+            {workbenchError && (
+              <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4, background: '#2a1515', border: '1px solid #5c2a2a', fontSize: 12, color: '#e07a7a', lineHeight: 1.5 }}>
+                {workbenchError}
+              </div>
+            )}
+            </div>
           </>
         )}
-
         {autoReplyMode === 'single' && !autoReplyTarget && (
           <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         )}
+
         <h3 className="proxy-section-title" id="reply-reply-section">自动回复</h3>
         <ProxyField label="自动处理消息">
           <Switch enabled={enabled} onChange={onToggleEnabled} />
         </ProxyField>
-        <div className="proxy-note">开启后，收到新消息将自动调用 AI 来生成回复</div>
+        <div className="proxy-note">开启后，收到新消息自动调用 AI 生成回复</div>
         <ProxyField label="回复范围">
           <CustomSelect
             placeholder="选择范围"
@@ -2074,81 +2217,14 @@ function AutoReplyPanel({
             }}
           />
         </ProxyField>
-        <div className="proxy-note">全局模式下对所有用户生效，单用户模式仅对选定的用户生效</div>
-
-        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-        <h4 style={{ fontSize: 16, margin: '0 0 20px', fontWeight: 700 }}>回复风格</h4>
-        <ProxyField label="角色设定">
-          <CustomSelect
-            placeholder="选择角色"
-            value={config.role}
-            options={[
-              { value: '客服专员', label: '客服专员' },
-              { value: '销售顾问', label: '销售顾问' },
-              { value: '技术支持', label: '技术支持' },
-              { value: '运营助手', label: '运营助手' },
-              { value: '自定义', label: '自定义' },
-            ]}
-            onChange={(val) => onUpdateConfig({ role: val })}
-          />
-        </ProxyField>
-        <div className="proxy-note">AI 助手的身份角色，影响回复定位</div>
-
-        <ProxyField label="系统提示词" className="proxy-field--top">
-          <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
-        </ProxyField>
-        <div className="proxy-note">定义 AI 助手的角色和风格，规则自动追加</div>
-
-        <ProxyField label="语气">
-          <CustomSelect
-            placeholder="选择语气"
-            value={config.tone}
-            options={[
-              { value: '热情', label: '热情' },
-              { value: '随意', label: '随意' },
-              { value: '正式', label: '正式' },
-              { value: '幽默', label: '幽默' },
-              { value: '冷静', label: '冷静' },
-              { value: '专业', label: '专业' },
-            ]}
-            onChange={(val) => onUpdateConfig({ tone: val })}
-          />
-        </ProxyField>
-        <div className="proxy-note">AI 回复用户的整体语气风格</div>
-
-        <ProxyField label="回复长度">
-          <CustomSelect
-            placeholder="选择长度"
-            value={config.length}
-            options={[
-              { value: '简短', label: '简短（50字内）' },
-              { value: '适中', label: '适中（100字左右）' },
-              { value: '详细', label: '详细（200字内）' },
-            ]}
-            onChange={(val) => onUpdateConfig({ length: val })}
-          />
-        </ProxyField>
-        <div className="proxy-note">限制 AI 回复的字数范围</div>
-
-        <ProxyField label="称呼习惯">
-          <CustomSelect
-            placeholder="选择称呼"
-            value={config.salutation}
-            options={[
-              { value: '您', label: '您' },
-              { value: '亲', label: '亲' },
-              { value: '老板', label: '老板' },
-              { value: '不称呼', label: '不称呼' },
-            ]}
-            onChange={(val) => onUpdateConfig({ salutation: val })}
-          />
-        </ProxyField>
-        <div className="proxy-note">AI 如何称呼用户</div>
-
-        <ProxyField label="表情符号">
-          <Switch enabled={config.allowEmoji} onChange={(v) => onUpdateConfig({ allowEmoji: v })} />
-        </ProxyField>
-        <div className="proxy-note">允许 AI 在回复中使用表情符号</div>
+        {autoReplyMode === 'single' && (
+          <>
+            <ProxyField label="自动发送">
+              <Switch enabled={config.autoSendSingle} onChange={(v) => onUpdateConfig({ autoSendSingle: v })} />
+            </ProxyField>
+            <div className="proxy-note">开启自动发送，关闭仅填输入框</div>
+          </>
+        )}
 
         <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>触发策略</h4>
@@ -2360,52 +2436,6 @@ function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">收到含关键词的消息时，发送回复不调用 AI</div>
 
-        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-        <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>模型参数</h4>
-        <ProxyField label="Temperature">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(config.temperature * 100)}
-              onChange={(e) => onUpdateConfig({ temperature: Number(e.target.value) / 100 })}
-              style={{ flex: 1, accentColor: '#19d973' }}
-            />
-            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.temperature.toFixed(1)}</span>
-          </div>
-        </ProxyField>
-        <div className="proxy-note">控制创意程度，越低越保守（0.0 ~ 1.0）</div>
-
-        <ProxyField label="最大字数">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-            <input
-              type="range"
-              min={0}
-              max={500}
-              step={50}
-              value={config.maxTokens}
-              onChange={(e) => onUpdateConfig({ maxTokens: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: '#19d973' }}
-            />
-            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.maxTokens || '无'}</span>
-          </div>
-        </ProxyField>
-        <div className="proxy-note">限制回复的最大 token 数，0 表示不限制</div>
-
-        <ProxyField label="上下文轮数">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-            <input
-              type="range"
-              min={0}
-              max={20}
-              value={config.contextRounds}
-              onChange={(e) => onUpdateConfig({ contextRounds: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: '#19d973' }}
-            />
-            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.contextRounds || '无'}</span>
-          </div>
-        </ProxyField>
         </>)} {activeTab === 'model' && (<>
         <h3 className="proxy-section-title" id="reply-model-section">大模型设置</h3>
         <ProxyField label="模型" className="proxy-field--top">
@@ -2423,7 +2453,7 @@ function AutoReplyPanel({
               { value: 'doubao-pro', label: '豆包 Pro' },
               { value: 'moonshot-v1-8k', label: 'Kimi K1' },
               { value: 'glm-4', label: 'GLM-4' },
-              { value: 'abab6', label: 'MiniMax' },
+              { value: 'MiniMax-M2.7', label: 'MiniMax M2.7' },
             ]}
             onChange={(val) => onUpdateConfig({ model: val })}
           />
@@ -2431,7 +2461,7 @@ function AutoReplyPanel({
         <div className="proxy-note">选择常用大模型，或输入自定义模型名称</div>
 
         <ProxyField label="API 地址">
-          <input className="proxy-input" placeholder="https://api.openai.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
+          <input className="proxy-input" placeholder="https://api.minimaxi.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">OpenAI 兼容格式的 API 地址</div>
 
@@ -2439,6 +2469,174 @@ function AutoReplyPanel({
           <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
         </ProxyField>
         <div className="proxy-note">大模型服务的 API 密钥</div>
+
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>回复风格</h4>
+        <ProxyField label="角色设定">
+          <CustomSelect
+            placeholder="选择角色"
+            value={config.role}
+            options={[
+              { value: '客服专员', label: '客服专员' },
+              { value: '销售顾问', label: '销售顾问' },
+              { value: '技术支持', label: '技术支持' },
+              { value: '运营助手', label: '运营助手' },
+              { value: '自定义', label: '自定义' },
+            ]}
+            onChange={(val) => onUpdateConfig({ role: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 助手的身份角色，影响回复定位</div>
+
+        <ProxyField label="系统提示词" className="proxy-field--top">
+          <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
+        </ProxyField>
+        <div className="proxy-note">定义 AI 助手的角色和风格，规则自动追加</div>
+
+        <ProxyField label="语气">
+          <CustomSelect
+            placeholder="选择语气"
+            value={config.tone}
+            options={[
+              { value: '热情', label: '热情' },
+              { value: '随意', label: '随意' },
+              { value: '正式', label: '正式' },
+              { value: '幽默', label: '幽默' },
+              { value: '冷静', label: '冷静' },
+              { value: '专业', label: '专业' },
+            ]}
+            onChange={(val) => onUpdateConfig({ tone: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 回复用户的整体语气风格</div>
+
+        <ProxyField label="回复长度">
+          <CustomSelect
+            placeholder="选择长度"
+            value={config.length}
+            options={[
+              { value: '简短', label: '简短（50字内）' },
+              { value: '适中', label: '适中（100字左右）' },
+              { value: '详细', label: '详细（200字内）' },
+            ]}
+            onChange={(val) => onUpdateConfig({ length: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">限制 AI 回复的字数范围</div>
+
+        <ProxyField label="称呼习惯">
+          <CustomSelect
+            placeholder="选择称呼"
+            value={config.salutation}
+            options={[
+              { value: '您', label: '您' },
+              { value: '亲', label: '亲' },
+              { value: '老板', label: '老板' },
+              { value: '不称呼', label: '不称呼' },
+            ]}
+            onChange={(val) => onUpdateConfig({ salutation: val })}
+          />
+        </ProxyField>
+        <div className="proxy-note">AI 如何称呼用户</div>
+
+        <ProxyField label="表情符号">
+          <Switch enabled={config.allowEmoji} onChange={(v) => onUpdateConfig({ allowEmoji: v })} />
+        </ProxyField>
+        <div className="proxy-note">允许 AI 在回复中使用表情符号</div>
+
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+        <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>模型参数</h4>
+
+        <ProxyField label="创意程度">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(config.temperature * 100)}
+              onChange={(e) => onUpdateConfig({ temperature: Number(e.target.value) / 100 })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.temperature.toFixed(1)}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">创意程度，越低越保守（0.0 ~ 1.0）</div>
+
+        <ProxyField label="最大字数">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={500}
+              step={50}
+              value={config.maxTokens}
+              onChange={(e) => onUpdateConfig({ maxTokens: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.maxTokens || '无'}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">限制最大 token 数，0 表示不限制</div>
+
+        <ProxyField label="上下文轮数">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={20}
+              value={config.contextRounds}
+              onChange={(e) => onUpdateConfig({ contextRounds: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.contextRounds || '无'}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">对话轮数，0 表示不参考上下文</div>
+
+        <ProxyField label="Top P">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(config.topP * 100)}
+              onChange={(e) => onUpdateConfig({ topP: Number(e.target.value) / 100 })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.topP.toFixed(2)}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">越小输出越稳定（0.0 ~ 1.0）</div>
+
+        <ProxyField label="频率惩罚">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={-20}
+              max={20}
+              value={Math.round(config.frequencyPenalty * 10)}
+              onChange={(e) => onUpdateConfig({ frequencyPenalty: Number(e.target.value) / 10 })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.frequencyPenalty.toFixed(1)}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">越高重复越少（-2.0 ~ 2.0）</div>
+
+        <ProxyField label="存在惩罚">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+            <input
+              type="range"
+              min={-20}
+              max={20}
+              value={Math.round(config.presencePenalty * 10)}
+              onChange={(e) => onUpdateConfig({ presencePenalty: Number(e.target.value) / 10 })}
+              style={{ flex: 1, accentColor: '#19d973' }}
+            />
+            <span style={{ fontSize: 12, color: '#a8afb7', width: 40, textAlign: 'right' }}>{config.presencePenalty.toFixed(1)}</span>
+          </div>
+        </ProxyField>
+        <div className="proxy-note">越高话题越新（-2.0 ~ 2.0）</div>
       </>)} </div>
     </aside>
   )

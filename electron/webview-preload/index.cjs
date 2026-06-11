@@ -927,6 +927,43 @@ function startAutoReplyScraper(partition) {
             });
             return msgs;
         }
+        function extractAllMessages() {
+            const msgs = [];
+            // WeChat web IM: each message is a .message element with .me (self) or .you (other)
+            const msgEls = document.querySelectorAll('.message');
+            console.log('[ChatStats] extractAllMessages found', msgEls.length, '.message elements');
+            msgEls.forEach((el, i) => {
+                // Skip system messages (timestamps)
+                if (el.classList.contains('message_system')) return;
+                // Text is in .js_message_plain inside .bubble_cont > .plain
+                let text = el.querySelector('.js_message_plain')?.innerText?.trim();
+                if (!text) {
+                    text = el.querySelector('.plain pre')?.innerText?.trim();
+                }
+                if (!text) {
+                    text = el.innerText?.trim();
+                }
+                if (!text) {
+                    if (i < 3) console.log('[ChatStats] msg', i, 'no text, classes:', el.className);
+                    return;
+                }
+                // Sender name from avatar img title attribute
+                const avatarImg = el.querySelector('img.avatar');
+                const name = avatarImg?.getAttribute('title') || '对方';
+                // isSelf: .message has class 'me' for my messages, 'you' for theirs
+                const isSelf = el.classList.contains('me');
+                if (i < 3) console.log('[ChatStats] msg', i, 'sender:', name, 'isSelf:', isSelf, 'text:', text.slice(0, 30));
+                msgs.push({
+                    partition,
+                    sender: isSelf ? '我' : name,
+                    content: text,
+                    isFromUser: !isSelf,
+                    timestamp: Date.now(),
+                });
+            });
+            console.log('[ChatStats] extractAllMessages returning', msgs.length, 'messages');
+            return msgs;
+        }
         // Initial scrape after page settles
         setTimeout(() => {
             extractMessages().forEach((m) => {
@@ -952,7 +989,8 @@ function startAutoReplyScraper(partition) {
         observer.observe(target, { childList: true, subtree: true });
         // Send full conversation history every 5s for the reply workbench
         setInterval(() => {
-            const history = extractMessages();
+            const history = extractAllMessages();
+            console.log('[ChatStats] sending chat:history with', history.length, 'msgs, partition:', partition);
             electron_1.ipcRenderer.send('chat:history', { partition, history });
         }, 5000);
         // ── Chat list stats scraper ─────────────────────────
