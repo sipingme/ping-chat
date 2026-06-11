@@ -11,9 +11,11 @@ interface Window {
     setProxy: (partition: string, config: any) => Promise<boolean>
     checkProxy: (config: any) => Promise<{ ok: boolean; ip?: string; latency?: number; error?: string }>
     setCookies: (partition: string, cookieText: string) => Promise<boolean>
+    saveCookies: (partition: string) => Promise<{ ok: boolean; count?: number; error?: string }>
+    loadCookies: (partition: string) => Promise<{ ok: boolean; count?: number; error?: string }>
     loadSessions: () => Promise<any[]>
     saveSessions: (sessions: any[]) => Promise<boolean>
-    sendReply: (partition: string, content: string) => Promise<boolean>
+    sendReply: (partition: string, content: string, autoSend?: boolean) => Promise<boolean>
     selectChat: (partition: string, contactName: string) => Promise<boolean>
     setMonitorEnabled: (partition: string, enabled: boolean) => Promise<boolean>
     onChatMessage: (

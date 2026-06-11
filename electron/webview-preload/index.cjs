@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
-const { wechatAdapter } = require('./wechat-adapter.cjs');
-const { xiaohongshuAdapter } = require('./xiaohongshu-adapter.cjs');
+const path = require("path");
+const { wechatAdapter } = require(path.join(__dirname, 'wechat-adapter.cjs'));
+const { xiaohongshuAdapter } = require(path.join(__dirname, 'xiaohongshu-adapter.cjs'));
 function parseNum(val) {
     if (!val)
         return 0;

@@ -795,16 +795,70 @@ function startAutoReplyScraper(partition: string) {
     // Register this webview with main process
     ipcRenderer.invoke('chat:register', partition)
 
+    // ── localStorage persistence ────────────────────────
+    function dumpLocalStorage(): void {
+      const data: Record<string, string> = {}
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i)
+        if (key) data[key] = window.localStorage.getItem(key) || ''
+      }
+      ipcRenderer.send('localstorage:dump', { partition, data })
+    }
+
+    // Request restore on startup
+    ipcRenderer.send('localstorage:request-restore', { partition })
+
+    // Listen for restore from main
+    ipcRenderer.on('localstorage:restore', (_event, payload: { partition: string; data: Record<string, string> }) => {
+      if (payload.partition !== partition) return
+      Object.entries(payload.data).forEach(([key, value]) => {
+        window.localStorage.setItem(key, value)
+      })
+      console.log('[localStorage] restored', Object.keys(payload.data).length, 'items')
+    })
+
+    // Listen for dump request from main (before quit)
+    ipcRenderer.on('localstorage:dump-request', (_event, payload: { partition: string }) => {
+      if (payload.partition !== partition) return
+      dumpLocalStorage()
+    })
+
+    // Periodic auto-save
+    setInterval(dumpLocalStorage, 30000)
+
+    // 小红书：页面加载后自动切换到"全部会话"，确保获取完整联系人列表
+    if (adapter.name === 'xiaohongshu') {
+      setTimeout(() => {
+        ;(adapter as any).switchToAllSessions?.()
+      }, 3000)
+      // 再尝试一次，以防首次加载时 tab 还没渲染
+      setTimeout(() => {
+        ;(adapter as any).switchToAllSessions?.()
+      }, 6000)
+    }
+
     // ── Contact click tracking ──────────────────────────
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement
       // Try to find the closest chat list item via adapter
       let chatItem: Element | null = null
-      // WeChat uses .chat_item; XHS will use its own selector
-      chatItem = target?.closest?.('.chat_item')
-      if (!chatItem && adapter.name === 'xiaohongshu') {
-        // TODO: add XHS chat list item selector
-        chatItem = target?.closest?.('[class*="session"], [class*="chat-item"]')
+      // First try adapter-specific selector if available
+      if (adapter.name === 'xiaohongshu') {
+        chatItem = target?.closest?.('.sx-contact-item')
+      } else {
+        chatItem = target?.closest?.('.chat_item')
+      }
+      // Fallback: walk up DOM and check each element with adapter
+      if (!chatItem) {
+        let el: Element | null = target
+        while (el && el !== document.body) {
+          const contact = adapter.extractContactFromElement(el)
+          if (contact) {
+            chatItem = el
+            break
+          }
+          el = el.parentElement
+        }
       }
       if (!chatItem) return
 
@@ -851,8 +905,8 @@ function startAutoReplyScraper(partition: string) {
       adapter.selectChat(payload.contactName)
     })
 
-    ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string }) => {
-      adapter.sendReply(payload.content)
+    ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string; autoSend?: boolean }) => {
+      adapter.sendReply(payload.content, payload.autoSend !== false)
     })
 
     // ── Message monitoring ──────────────────────────────

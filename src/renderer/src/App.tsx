@@ -93,7 +93,7 @@ type ChatSession = {
 }
 
 const WECHAT_WEB_URL = 'https://web.wechat.com/'
-const XIAOHONGSHU_WEB_URL = 'https://sxt.xiaohongshu.com/im/login'
+const XIAOHONGSHU_WEB_URL = 'https://sxt.xiaohongshu.com/'
 
 const BROWSER_VERSIONS = [
   'Chrome 135', 'Chrome 134', 'Chrome 133', 'Chrome 132', 'Chrome 131', 'Chrome 130',
@@ -301,7 +301,7 @@ export function App(): JSX.Element {
       }
       // Keyword interception
       if (config.keywords.length > 0 && config.keywords.some((k) => lastMsg.content.includes(k))) {
-        await window.pingChat.sendReply(lastMsg.partition, config.keywordResponse)
+        await window.pingChat.sendReply(lastMsg.partition, config.keywordResponse, config.autoSend)
         setAutoReplyProcessing(false)
         return
       }
@@ -347,7 +347,7 @@ export function App(): JSX.Element {
             // Switch to the target user's chat window before sending
             await window.pingChat.selectChat(lastMsg.partition, lastMsg.sender)
             await new Promise((r) => setTimeout(r, 500))
-            await window.pingChat.sendReply(lastMsg.partition, reply)
+            await window.pingChat.sendReply(lastMsg.partition, reply, config.autoSend)
           } else {
             // Lock on this partition until manual reply is detected
             globalPendingPartitionRef.current = lastMsg.partition
@@ -367,8 +367,18 @@ export function App(): JSX.Element {
         const stored = await window.pingChat.loadSessions()
         if (stored && stored.length > 0) {
           setSessions(stored)
-          setActiveSessionId(stored[0].id)
-          setActivePlatformId(stored[0].platformId)
+          setActivePlatformId('xiaohongshu')
+          const xhsSession = stored.find((s) => s.platformId === 'xiaohongshu')
+          setActiveSessionId(xhsSession?.id ?? stored[0].id)
+          // auto-load saved cookies for each session
+          for (const s of stored) {
+            try {
+              const res = await window.pingChat.loadCookies(s.partition)
+              if (res.ok) console.log('[App] loaded cookies for', s.partition, res.count)
+            } catch (e) {
+              console.error('[App] load cookies failed for', s.partition, e)
+            }
+          }
         }
       } catch (e) {
         console.error('[App] load sessions failed:', e)
@@ -493,10 +503,9 @@ export function App(): JSX.Element {
               processing={autoReplyProcessing}
               processedCount={processedCount}
               messages={autoReplyMessages}
-              onClearMessages={() => setAutoReplyMessages([])}
               config={autoReplyConfig}
               onUpdateConfig={(updates) => setAutoReplyConfig((prev) => ({ ...prev, ...updates }))}
-              onSendReply={(partition, content) => void window.pingChat.sendReply(partition, content)}
+              onSendReply={(partition, content, autoSend) => void window.pingChat.sendReply(partition, content, autoSend)}
               chatStats={chatStats}
               autoReplyTarget={autoReplyTarget}
               setAutoReplyTarget={setAutoReplyTarget}
@@ -937,6 +946,7 @@ function ProxyEnvironmentPanel({
 
           <div className="translation-body proxy-body" ref={proxyBodyRef}>
             <ProxySettingsTab
+              session={session}
               fingerprint={draftFingerprint}
               proxy={draftProxy}
               cookieText={draftCookie}
@@ -1015,6 +1025,7 @@ function CustomTooltip({ children, content }: { children: ReactNode; content: Re
 }
 
 function ProxySettingsTab({
+  session,
   fingerprint,
   proxy,
   cookieText,
@@ -1022,6 +1033,7 @@ function ProxySettingsTab({
   onChangeProxy,
   onChangeCookie,
 }: {
+  session?: ChatSession
   fingerprint?: FingerprintSettings
   proxy?: ProxyConfig
   cookieText?: string
@@ -1416,6 +1428,128 @@ function buildSystemPrompt(config: { systemPrompt: string; role: string; tone: s
   return config.systemPrompt + (ruleParts.length ? '\n\n要求：' + ruleParts.join('，') + '。' : '')
 }
 
+function MonitorPanel({ session, monitoringEnabled, onToggleMonitoring, chatStats, setReplyTarget, handleScrollTo, setAutoReplyMode, setAutoReplyTarget, messages, processedCount }: { session?: ChatSession; monitoringEnabled: boolean; onToggleMonitoring: (v: boolean) => void; chatStats: any; setReplyTarget: (v: string) => void; handleScrollTo: (tab: 'monitor' | 'overview' | 'reply' | 'model') => void; setAutoReplyMode: (v: 'global' | 'single') => void; setAutoReplyTarget: (v: string) => void; messages: ChatMessage[]; processedCount: number }): JSX.Element {
+  const [showUserList, setShowUserList] = useState(false)
+  const [showGroupList, setShowGroupList] = useState(false)
+  const isWechat = session?.platformId === 'wechat'
+
+  return (
+    <>
+      <h3 className="proxy-section-title">监控面板</h3>
+      <ProxyField label="监控状态"><Switch enabled={monitoringEnabled} onChange={onToggleMonitoring} /></ProxyField>
+      <div className="proxy-note">开启后，每 5 秒自动扫描并上报聊天列表状态</div>
+      <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+      {monitoringEnabled && (
+        <>
+          <h3 className="proxy-section-title" id="reply-users-section">用户信息</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: isWechat ? '1fr 1fr' : '1fr', gap: 8, marginBottom: 12 }}>
+            <button className="secondary-action" style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }} onClick={() => { setShowUserList((v) => !v); setShowGroupList(false) }}>
+              <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>用户数量</span>
+                <ChevronDown size={12} style={{ transform: showUserList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.userCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+            </button>
+            {isWechat && (
+              <button className="secondary-action" style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }} onClick={() => { setShowGroupList((v) => !v); setShowUserList(false) }}>
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>群聊数量</span>
+                  <ChevronDown size={12} style={{ transform: showGroupList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.groupCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+              </button>
+            )}
+          </div>
+          {showUserList && (
+            <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
+              {(chatStats?.contacts ?? []).filter((c: any) => !c.isGroup).map((c: any, i: number) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {c.avatar ? <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>}
+                    <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                    <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyMode('single'); setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {isWechat && showGroupList && (
+            <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
+              {(chatStats?.contacts ?? []).filter((c: any) => c.isGroup).map((c: any, i: number) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {c.avatar ? <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>}
+                    <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {monitoringEnabled && (<>
+        <h3 className="proxy-section-title" id="reply-messages-section" style={{ marginTop: 30 }}>消息监控</h3>
+        {(!chatStats || (chatStats.totalCount === 0 && messages.length === 0)) ? (
+          <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
+            <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无监控数据，请确保{isWechat ? '微信' : '小红书'}已正常登录</span>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>未处理</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{chatStats?.totalUnread ?? messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+              </div>
+              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
+                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>已处理</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
+              </div>
+            </div>
+
+            {chatStats && chatStats.unreadContacts.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                {chatStats.unreadContacts.filter((c: any) => !c.isGroup).length > 0 && <div style={{ marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>用户</div>}
+                {chatStats.unreadContacts.filter((c: any) => !c.isGroup).map((c: any, i: number) => (
+                  <div key={`u-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+                {isWechat && chatStats.unreadContacts.filter((c: any) => c.isGroup).length > 0 && <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>群聊</div>}
+                {isWechat && chatStats.unreadContacts.filter((c: any) => c.isGroup).map((c: any, i: number) => (
+                  <div key={`g-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.avatar ? <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>}
+                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* message sender cards removed */}
+          </>
+        )}
+      </>)}
+    </>
+  )
+}
+
 function AutoReplyPanel({
   session,
   onClose,
@@ -1426,7 +1560,6 @@ function AutoReplyPanel({
   processing,
   processedCount,
   messages,
-  onClearMessages,
   config,
   onUpdateConfig,
   onSendReply,
@@ -1445,10 +1578,9 @@ function AutoReplyPanel({
   processing: boolean
   processedCount: number
   messages: ChatMessage[]
-  onClearMessages: () => void
   config: { apiKey: string; endpoint: string; model: string; systemPrompt: string; tone: string; length: string; salutation: string; allowEmoji: boolean; templates: Array<{ title: string; content: string }>; delaySeconds: number; role: string; blacklist: string[]; keywords: string[]; keywordResponse: string; temperature: number; maxTokens: number; contextRounds: number; topP: number; frequencyPenalty: number; presencePenalty: number; autoSend: boolean }
   onUpdateConfig: (updates: Partial<typeof config>) => void
-  onSendReply: (partition: string, content: string) => void
+  onSendReply: (partition: string, content: string, autoSend?: boolean) => void
   chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
   autoReplyTarget: string
   setAutoReplyTarget: (v: string) => void
@@ -1459,8 +1591,6 @@ function AutoReplyPanel({
   const [generating, setGenerating] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
-  const [showUserList, setShowUserList] = useState(false)
-  const [showGroupList, setShowGroupList] = useState(false)
   const [generatedReply, setGeneratedReply] = useState('')
   const [workbenchGenerating, setWorkbenchGenerating] = useState(false)
   const [workbenchPrompt, setWorkbenchPrompt] = useState('')
@@ -1608,7 +1738,7 @@ function AutoReplyPanel({
           if (config.delaySeconds > 0) {
             await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
           }
-          onSendReply(session.partition, reply)
+          onSendReply(session.partition, reply, config.autoSend)
           setWorkbenchPrompt('')
         }
         // When autoSend is false, reply is already set in workbenchPrompt by handleWorkbenchGenerate
@@ -1664,7 +1794,7 @@ function AutoReplyPanel({
       const data = await res.json()
       const reply = data.choices?.[0]?.message?.content
       if (reply && session) {
-        onSendReply(session.partition, reply)
+        onSendReply(session.partition, reply, config.autoSend)
       }
     } catch (e) {
       console.error('Generate reply failed:', e)
@@ -1753,173 +1883,22 @@ function AutoReplyPanel({
       </div>
 
       <div className="translation-body proxy-body">
-        {activeTab === 'monitor' && (<>
-        <h3 className="proxy-section-title">监控面板</h3>
-        <ProxyField label="监控状态">
-          <Switch enabled={monitoringEnabled} onChange={onToggleMonitoring} />
-        </ProxyField>
-        <div className="proxy-note">开启后，每 5 秒自动扫描并上报聊天列表状态</div>
-        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-        {monitoringEnabled && (
-          <>
-            <h3 className="proxy-section-title" id="reply-users-section">用户信息</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-              <button
-                className="secondary-action"
-                style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }}
-                onClick={() => { setShowUserList((v) => !v); setShowGroupList(false) }}
-              >
-                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>用户数量</span>
-                  <ChevronDown size={12} style={{ transform: showUserList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
-                </div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.userCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
-              </button>
-              <button
-                className="secondary-action"
-                style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: 'pointer' }}
-                onClick={() => { setShowGroupList((v) => !v); setShowUserList(false) }}
-              >
-                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>群聊数量</span>
-                  <ChevronDown size={12} style={{ transform: showGroupList ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', color: '#8c96a1' }} />
-                </div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#f3f5f7' }}>{chatStats?.groupCount ?? 0}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
-              </button>
-            </div>
-            {showUserList && (
-              <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
-                {(chatStats?.contacts ?? []).filter((c) => !c.isGroup).map((c, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {c.avatar ? (
-                        <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                      )}
-                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="自动回复" onClick={() => { setAutoReplyMode('single'); setAutoReplyTarget(c.name); handleScrollTo('reply'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Zap size={12} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {showGroupList && (
-              <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
-                {(chatStats?.contacts ?? []).filter((c) => c.isGroup).map((c, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {c.avatar ? (
-                        <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                      )}
-                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <button className="icon-action" style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+        {activeTab === 'monitor' && (
+          <MonitorPanel
+            session={session}
+            monitoringEnabled={monitoringEnabled}
+            onToggleMonitoring={onToggleMonitoring}
+            chatStats={chatStats}
+            setReplyTarget={setReplyTarget}
+            handleScrollTo={handleScrollTo}
+            setAutoReplyMode={setAutoReplyMode}
+            setAutoReplyTarget={setAutoReplyTarget}
+            messages={messages}
+            processedCount={processedCount}
+          />
         )}
 
-        {monitoringEnabled && (<>
-        <h3 className="proxy-section-title" id="reply-messages-section" style={{ marginTop: 30 }}>消息监控</h3>
-        {(!chatStats || (chatStats.totalCount === 0 && messages.length === 0)) ? (
-          <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
-            <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无监控数据，请确保微信已正常登录</span>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>未处理</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#ff9b6a' }}>{chatStats?.totalUnread ?? messages.length - processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
-              </div>
-              <div style={{ padding: '10px 12px', borderRadius: 6, background: '#252a2e', border: '1px solid #2c3135' }}>
-                <div style={{ fontSize: 11, color: '#8c96a1', marginBottom: 4 }}>已处理</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#19d973' }}>{processedCount}<span style={{ fontSize: 11, fontWeight: 400, color: '#8c96a1', marginLeft: 4 }}>个</span></div>
-              </div>
-            </div>
-
-            {chatStats && chatStats.unreadContacts.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                {chatStats.unreadContacts.filter((c) => !c.isGroup).length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>用户</div>
-                )}
-                {chatStats.unreadContacts.filter((c) => !c.isGroup).map((c, i) => (
-                  <div key={`u-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {c.avatar ? (
-                        <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                      )}
-                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                    </div>
-                  </div>
-                ))}
-                {chatStats.unreadContacts.filter((c) => c.isGroup).length > 0 && (
-                  <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#8c96a1', fontWeight: 600 }}>群聊</div>
-                )}
-                {chatStats.unreadContacts.filter((c) => c.isGroup).map((c, i) => (
-                  <div key={`g-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {c.avatar ? (
-                        <img src={c.avatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#8c96a1' }}>{c.name.charAt(0)}</div>
-                      )}
-                      <span style={{ fontSize: 12, color: '#f3f5f7' }}>{c.name}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button style={{ height: 22, width: 22, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: '#8c96a1' }} title="快捷回复" onClick={() => { setReplyTarget(c.name); handleScrollTo('overview'); if (session) void window.pingChat.selectChat(session.partition, c.name) }}><Send size={12} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {senders.length > 0 && (
-              <button className="secondary-action wide" style={{ marginBottom: 12 }} onClick={onClearMessages}>清空消息</button>
-            )}
-            {senders.map((sender) => {
-              const msgs = grouped[sender]
-              const last = msgs[msgs.length - 1]
-              return (
-                <div key={sender} className="session-card" style={{ marginBottom: 8, padding: '8px 10px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <strong style={{ fontSize: 12, color: '#f3f5f7' }}>{sender}</strong>
-                    <span style={{ fontSize: 10, color: '#8c96a1' }}>{msgs.length} 条</span>
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 11, color: '#a8afb7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {last.content}
-                  </div>
-                  <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => handleGenerate(sender)} disabled={generating || !config.apiKey}>
-                      {generating ? '生成中…' : 'AI 回复'}
-                    </button>
-                    <button className="secondary-action" style={{ flex: 1, height: 26, fontSize: 11 }} onClick={() => { setReplyTarget(sender); handleScrollTo('overview') }}>
-                      手动回复
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </>
-        )}
-        </>)}
-
-        </>)} {activeTab === 'overview' && (<>
+        {activeTab === 'overview' && (<>
         {replyTarget && (
           <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#143324', border: '1px solid #04c768', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2155,7 +2134,7 @@ function AutoReplyPanel({
             {pendingConversation.length === 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px 0', marginBottom: 12, gap: 6 }}>
                 <MessageSquare size={18} style={{ color: '#3a4147' }} />
-                <span style={{ fontSize: 12, color: '#5c6670' }}>暂无待回复的聊天记录</span>
+                <span style={{ fontSize: 12, color: '#5c6670' }}>正在监控新消息…</span>
               </div>
             )}
 

@@ -15,11 +15,12 @@ export default defineConfig({
   },
   preload: {
     build: {
-      rollupOptions: {
-        input: {
+      lib: {
+        entry: {
           index: resolve(rootDir, 'electron/preload/index.ts'),
           webview: resolve(rootDir, 'electron/webview-preload/index.ts'),
-        }
+        },
+        formats: ['cjs']
       }
     }
   },

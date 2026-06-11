@@ -271,7 +271,7 @@ export const wechatAdapter = {
     }
   },
 
-  sendReply(content: string): boolean {
+  sendReply(content: string, autoSend: boolean = true): boolean {
     // WeChat Web specific selectors first, then generic fallbacks
     let input: HTMLElement | null = document.querySelector('#editArea[contenteditable="true"]') as HTMLElement | null
     if (!input) input = document.querySelector('.edit_area [contenteditable="true"]') as HTMLElement | null
@@ -297,6 +297,11 @@ export const wechatAdapter = {
       document.execCommand('insertText', false, content)
       input.dispatchEvent(new Event('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+
+    if (!autoSend) {
+      console.log('[ChatStats] reply: content filled, autoSend skipped')
+      return true
     }
 
     setTimeout(() => {

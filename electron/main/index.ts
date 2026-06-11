@@ -1,13 +1,24 @@
-import { app, BrowserWindow, ipcMain, session, net } from 'electron'
+import { app, BrowserWindow, ipcMain, session, net, globalShortcut } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
+
+// swallow EPIPE from broken dev-server pipes
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: any) => {
+    if (err.code === 'EPIPE') return
+    throw err
+  })
+}
 
 // 各 partition 的指纹配置
 const fingerprintStore = new Map<string, any>()
 
 const DATA_DIR = join(app.getPath('userData'), 'ping-chat-data')
 const SESSIONS_FILE = join(DATA_DIR, 'sessions.json')
+const COOKIE_DIR = join(DATA_DIR, 'cookies')
+const LOCALSTORAGE_DIR = join(DATA_DIR, 'localstorage')
+const webviewRegistry = new Map<string, number>() // partition -> webContentsId
 
 function ensureDataDir(): void {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
@@ -74,6 +85,16 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
     webContents.openDevTools({ mode: 'detach' })
+  })
+
+  // F12 toggles DevTools for the focused BrowserWindow
+  globalShortcut.register('F12', () => {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused) {
+      focused.webContents.isDevToolsOpened()
+        ? focused.webContents.closeDevTools()
+        : focused.webContents.openDevTools({ mode: 'detach' })
+    }
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -192,6 +213,81 @@ app.whenReady().then(() => {
     return true
   })
 
+  ipcMain.handle('cookie:save', async (_event, partition: string) => {
+    const sess = session.fromPartition(partition)
+    const cookies = await sess.cookies.get({})
+    if (!existsSync(COOKIE_DIR)) mkdirSync(COOKIE_DIR, { recursive: true })
+    const cookieFile = join(COOKIE_DIR, `${partition}.json`)
+    writeFileSync(cookieFile, JSON.stringify(cookies, null, 2))
+    console.log('[Cookie] saved', cookies.length, 'cookies for', partition)
+    return { ok: true, count: cookies.length }
+  })
+
+  ipcMain.handle('cookie:load', async (_event, partition: string) => {
+    const cookieFile = join(COOKIE_DIR, `${partition}.json`)
+    if (!existsSync(cookieFile)) return { ok: false, error: 'no saved cookies', count: 0 }
+    const raw = readFileSync(cookieFile, 'utf-8')
+    const cookies = JSON.parse(raw)
+    const sess = session.fromPartition(partition)
+    let success = 0
+    for (const c of cookies) {
+      const domain = (c.domain || '').replace(/^\./, '')
+      const urlsToTry = domain
+        ? [`https://${domain}`, `http://${domain}`]
+        : ['https://sxt.xiaohongshu.com', 'https://xiaohongshu.com', 'https://web.wechat.com']
+      let set = false
+      for (const url of urlsToTry) {
+        try {
+          await sess.cookies.set({
+            url,
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path || '/',
+            secure: c.secure,
+            httpOnly: c.httpOnly,
+            sameSite: c.sameSite,
+            expirationDate: c.expirationDate,
+          })
+          set = true
+          success++
+          break
+        } catch (e) {
+          // try next url
+        }
+      }
+      if (!set) {
+        console.error('[Cookie] load failed for:', c.name, 'domain:', c.domain)
+      }
+    }
+    console.log('[Cookie] loaded', success, '/', cookies.length, 'cookies for', partition)
+    return { ok: true, count: success }
+  })
+
+  // ── localStorage persistence ──
+  ipcMain.on('localstorage:dump', (_event, payload: { partition: string; data: Record<string, string> }) => {
+    try {
+      if (!existsSync(LOCALSTORAGE_DIR)) mkdirSync(LOCALSTORAGE_DIR, { recursive: true })
+      const file = join(LOCALSTORAGE_DIR, `${payload.partition}.json`)
+      writeFileSync(file, JSON.stringify(payload.data, null, 2))
+      console.log('[localStorage] saved', Object.keys(payload.data).length, 'items for', payload.partition)
+    } catch (e) {
+      console.error('[localStorage] save failed:', e)
+    }
+  })
+
+  ipcMain.on('localstorage:request-restore', (event, payload: { partition: string }) => {
+    try {
+      const file = join(LOCALSTORAGE_DIR, `${payload.partition}.json`)
+      if (!existsSync(file)) return
+      const data = JSON.parse(readFileSync(file, 'utf-8'))
+      event.sender.send('localstorage:restore', { partition: payload.partition, data })
+      console.log('[localStorage] sent restore for', payload.partition, Object.keys(data).length, 'items')
+    } catch (e) {
+      console.error('[localStorage] restore failed:', e)
+    }
+  })
+
   ipcMain.handle('sessions:load', () => loadSessions())
   ipcMain.handle('sessions:save', (_event, sessions: any[]) => {
     saveSessions(sessions)
@@ -199,8 +295,6 @@ app.whenReady().then(() => {
   })
 
   /* ── Auto Reply IPC relay ── */
-  const webviewRegistry = new Map<string, number>() // partition -> webContentsId
-
   ipcMain.handle('chat:register', (event, partition: string) => {
     webviewRegistry.set(partition, event.sender.id)
   })
@@ -234,15 +328,15 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('chat:reply', (_event, partition: string, content: string) => {
-    console.log('[Main] chat:reply received', partition, content.slice(0, 30))
+  ipcMain.handle('chat:reply', (_event, partition: string, content: string, autoSend?: boolean) => {
+    console.log('[Main] chat:reply received', partition, content.slice(0, 30), 'autoSend:', autoSend)
     let webContentsId = webviewRegistry.get(partition)
     if (!webContentsId) webContentsId = webviewRegistry.get('') // guest page partition fallback
     console.log('[Main] target webContentsId:', webContentsId, 'registry keys:', [...webviewRegistry.keys()])
     if (!webContentsId) return false
     const target = require('electron').webContents.fromId(webContentsId)
     if (!target) return false
-    target.send('chat:reply', { partition, content })
+    target.send('chat:reply', { partition, content, autoSend })
     console.log('[Main] sent chat:reply to webview')
     return true
   })
@@ -276,4 +370,35 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+})
+
+// Auto-save cookies + localStorage for all active webview partitions before quit
+app.on('before-quit', async () => {
+  const partitions = [...webviewRegistry.keys()].filter(Boolean)
+  console.log('[Cookie] auto-save on quit for partitions:', partitions)
+  for (const partition of partitions) {
+    try {
+      const sess = session.fromPartition(partition)
+      const cookies = await sess.cookies.get({})
+      if (!existsSync(COOKIE_DIR)) mkdirSync(COOKIE_DIR, { recursive: true })
+      const cookieFile = join(COOKIE_DIR, `${partition}.json`)
+      writeFileSync(cookieFile, JSON.stringify(cookies, null, 2))
+      console.log('[Cookie] auto-saved', cookies.length, 'cookies for', partition)
+    } catch (e) {
+      console.error('[Cookie] auto-save failed for', partition, e)
+    }
+  }
+  // Request localStorage dump from each webview before quitting
+  for (const [partition, webContentsId] of webviewRegistry.entries()) {
+    if (!partition) continue
+    const target = require('electron').webContents.fromId(webContentsId)
+    if (target) {
+      target.send('localstorage:dump-request', { partition })
+      console.log('[localStorage] requested dump for', partition)
+    }
+  }
 })
