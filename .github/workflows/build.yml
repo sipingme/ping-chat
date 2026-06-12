@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -35,8 +38,8 @@ jobs:
 
       - run: pnpm run build
 
-      - name: Build & Publish
-        run: pnpm run dist
+      - name: Build (no publish)
+        run: pnpm run dist --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,3 +74,22 @@ jobs:
             release/*.AppImage
             release/latest-linux.yml
           if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create/Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
