@@ -71,6 +71,8 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
     }
   }
 
+  const isChecking = updateState.status === 'checking'
+
   return (
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
@@ -102,15 +104,16 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
 
         <div
           style={{
-            padding: '12px 14px',
-            borderRadius: 4,
-            background: '#252a2e',
+            padding: '14px 16px',
+            borderRadius: 6,
+            background: '#1a1f23',
             border: '1px solid #2c3135',
             marginBottom: 12,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* Status row */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div
                 style={{
                   width: 8,
@@ -118,6 +121,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                   borderRadius: '50%',
                   background: statusColor(updateState.status),
                   flexShrink: 0,
+                  boxShadow: `0 0 6px ${statusColor(updateState.status)}40`,
                 }}
               />
               <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>
@@ -135,12 +139,32 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           {updateState.status === 'available' && (
             <>
               {updateState.releaseNotes && (
-                <div style={{ fontSize: 12, color: '#8c96a1', marginBottom: 10, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                <div style={{ fontSize: 12, color: '#8c96a1', marginBottom: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', padding: '8px 0' }}>
                   {updateState.releaseNotes}
                 </div>
               )}
-              <button className="apply-action" style={{ width: '100%' }} onClick={handleDownload}>
-                <Download size={14} style={{ marginRight: 6 }} />
+              <button
+                onClick={handleDownload}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: 6,
+                  border: 'none',
+                  background: '#19d973',
+                  color: '#0a0e10',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  transition: 'opacity 0.2s ease',
+                }}
+                onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = '0.85' }}
+                onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = '1' }}
+              >
+                <Download size={15} />
                 下载更新
               </button>
             </>
@@ -148,15 +172,18 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
 
           {updateState.status === 'downloading' && (
             <>
-              <div style={{ fontSize: 12, color: '#8c96a1', marginBottom: 6 }}>{updateState.percent}%</div>
-              <div style={{ width: '100%', height: 4, borderRadius: 2, background: '#1a1f23', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: '#8c96a1' }}>下载进度</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#f3f5f7' }}>{updateState.percent}%</span>
+              </div>
+              <div style={{ width: '100%', height: 5, borderRadius: 3, background: '#252a2e', overflow: 'hidden' }}>
                 <div
                   style={{
                     width: `${updateState.percent}%`,
                     height: '100%',
                     background: '#19d973',
-                    borderRadius: 2,
-                    transition: 'width 0.3s ease',
+                    borderRadius: 3,
+                    transition: 'width 0.4s ease',
                   }}
                 />
               </div>
@@ -164,22 +191,81 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           )}
 
           {updateState.status === 'downloaded' && (
-            <button className="apply-action" style={{ width: '100%' }} onClick={handleInstall}>
-              <RotateCcw size={14} style={{ marginRight: 6 }} />
+            <button
+              onClick={handleInstall}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: '#19d973',
+                color: '#0a0e10',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                transition: 'opacity 0.2s ease',
+              }}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = '0.85' }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = '1' }}
+            >
+              <RotateCcw size={15} />
               重启并安装
             </button>
           )}
 
           {updateState.status === 'error' && (
-            <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{updateState.message}</div>
+            <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 10, lineHeight: 1.4 }}>
+              {updateState.message}
+            </div>
           )}
 
+          {/* Check button — always shown except when downloading/downloaded/available */}
           {(updateState.status === 'idle' ||
             updateState.status === 'not-available' ||
             updateState.status === 'error') && (
-            <button className="secondary-action wide" onClick={handleCheck}>
-              <RefreshCw size={14} style={{ marginRight: 6 }} />
-              检测更新
+            <button
+              disabled={isChecking}
+              onClick={handleCheck}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: isChecking ? '1px solid #1f2528' : '1px solid #19d973',
+                background: isChecking ? '#14181b' : 'transparent',
+                color: isChecking ? '#5a6269' : '#19d973',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: isChecking ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!isChecking) {
+                  const el = e.currentTarget
+                  el.style.background = '#19d973'
+                  el.style.color = '#0a0e10'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isChecking) {
+                  const el = e.currentTarget
+                  el.style.background = 'transparent'
+                  el.style.color = '#19d973'
+                }
+              }}
+            >
+              <RefreshCw
+                size={15}
+                style={isChecking ? { animation: 'spin 1s linear infinite' } : undefined}
+              />
+              {isChecking ? '正在检测…' : '检测更新'}
             </button>
           )}
         </div>
