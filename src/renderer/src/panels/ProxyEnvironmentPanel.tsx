@@ -19,10 +19,9 @@ export function ProxyEnvironmentPanel({
 }): JSX.Element {
   const proxyBodyRef = useRef<HTMLDivElement>(null)
   const proxyTabsRef = useRef<HTMLDivElement>(null)
-  const [activeTab, setActiveTab] = useState<'proxy' | 'fingerprint' | 'cookie'>('proxy')
+  const [activeTab, setActiveTab] = useState<'proxy' | 'fingerprint'>('proxy')
   const [draftFingerprint, setDraftFingerprint] = useState<FingerprintSettings | undefined>(session?.fingerprint)
   const [draftProxy, setDraftProxy] = useState<ProxyConfig | undefined>(session?.proxy)
-  const [draftCookie, setDraftCookie] = useState('')
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
   useEffect(() => {
@@ -34,7 +33,6 @@ export function ProxyEnvironmentPanel({
       fakeOuterSize: session.fingerprint.fakeOuterSize ?? true,
     } : undefined)
     setDraftProxy(session?.proxy)
-    setDraftCookie('')
   }, [session?.id])
 
   useLayoutEffect(() => {
@@ -46,7 +44,7 @@ export function ProxyEnvironmentPanel({
   }, [activeTab])
 
   const handleScrollTo = (id: string): void => {
-    setActiveTab(id.replace('-section', '') as 'proxy' | 'fingerprint' | 'cookie')
+    setActiveTab(id.replace('-section', '') as 'proxy' | 'fingerprint')
     if (!proxyBodyRef.current) return
     if (id === 'proxy-section') {
       proxyBodyRef.current.scrollTo({ top: 0, behavior: 'smooth' })
@@ -79,9 +77,6 @@ export function ProxyEnvironmentPanel({
       onUpdateProxy(session.id, draftProxy)
       await window.pingChat.setProxy(session.partition, draftProxy)
     }
-    if (draftCookie.trim()) {
-      await window.pingChat.setCookies(session.partition, draftCookie.trim())
-    }
   }
 
   return (
@@ -104,7 +99,6 @@ export function ProxyEnvironmentPanel({
           <div className="proxy-tabs" ref={proxyTabsRef}>
             <button className={activeTab === 'proxy' ? 'active' : ''} onClick={() => handleScrollTo('proxy-section')}>代理设置</button>
             <button className={activeTab === 'fingerprint' ? 'active' : ''} onClick={() => handleScrollTo('fingerprint-section')}>指纹设置</button>
-            <button className={activeTab === 'cookie' ? 'active' : ''} onClick={() => handleScrollTo('cookie-section')}>Cookie</button>
             <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
           </div>
 
@@ -113,10 +107,8 @@ export function ProxyEnvironmentPanel({
               session={session}
               fingerprint={draftFingerprint}
               proxy={draftProxy}
-              cookieText={draftCookie}
               onChangeFingerprint={setDraftFingerprint}
               onChangeProxy={setDraftProxy}
-              onChangeCookie={setDraftCookie}
             />
           </div>
 

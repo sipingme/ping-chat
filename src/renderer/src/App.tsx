@@ -431,7 +431,7 @@ export function App(): JSX.Element {
         const saved = await window.pingChat.getConfig('autoReplyConfig')
         if (saved) {
           const encryptedKey = await window.pingChat.loadCredential('apiKey')
-          setAutoReplyConfig((prev) => ({ ...prev, ...saved, apiKey: encryptedKey || '' }))
+          setAutoReplyConfig((prev) => ({ ...prev, ...saved, apiKey: encryptedKey || '', model: saved.model || prev.model || 'MiniMax-M2.7' }))
         }
         const savedEnabled = await window.pingChat.getConfig('autoReplyEnabled')
         if (typeof savedEnabled === 'boolean') setAutoReplyEnabled(savedEnabled)
@@ -606,7 +606,6 @@ export function App(): JSX.Element {
                   recentReplyLogs={recentReplyLogs}
                   replyFeedbackMap={replyFeedbackMap}
                   onReplyFeedback={handleReplyFeedback}
-                  recalledMessages={recalledMessages}
                 />
               </Suspense>
             </ErrorBoundary>

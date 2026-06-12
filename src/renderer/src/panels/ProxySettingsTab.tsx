@@ -23,18 +23,14 @@ export function ProxySettingsTab({
   session,
   fingerprint,
   proxy,
-  cookieText,
   onChangeFingerprint,
   onChangeProxy,
-  onChangeCookie,
 }: {
   session?: ChatSession
   fingerprint?: FingerprintSettings
   proxy?: ProxyConfig
-  cookieText?: string
   onChangeFingerprint?: (fp: FingerprintSettings) => void
   onChangeProxy?: (p: ProxyConfig) => void
-  onChangeCookie?: (text: string) => void
 }): JSX.Element {
   const [checkStatus, setCheckStatus] = useState<{ type: 'idle' | 'checking' | 'ok' | 'error'; message?: string }>({ type: 'idle' })
 
@@ -134,7 +130,11 @@ export function ProxySettingsTab({
           </div>
         )}
       </ProxyField>
-      <h3 className="proxy-section-title" id="fingerprint-section">指纹设置</h3>
+      <h3 className="proxy-section-title" id="fingerprint-section" style={{ marginTop: 40 }}>指纹设置</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '16px 0 8px' }}>
+        <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>浏览器标识</span>
+      </div>
       <ProxyField label="浏览器版本">
         <CustomSelect
           className="proxy-select"
@@ -166,6 +166,12 @@ export function ProxySettingsTab({
           onChange={(e) => handleFp({ userAgent: e.target.value })}
         />
       </ProxyField>
+
+      <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '16px 0 8px' }}>
+        <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>地理位置与隐私</span>
+      </div>
       <ProxyField label="地理位置">
         <SegmentedControl values={['询问', '允许', '禁用']} active={fingerprint.geolocation} onChange={(v) => handleFp({ geolocation: v })} />
       </ProxyField>
@@ -178,6 +184,24 @@ export function ProxySettingsTab({
       {fingerprint.geolocation === '禁用' && (
         <div className="proxy-note">网站请求获取您当前位置时，始终被禁止</div>
       )}
+      <ProxyField label="WebRTC">
+        <SegmentedControl values={['替换', '允许', '禁用']} active={fingerprint.webrtc} onChange={(v) => handleFp({ webrtc: v })} />
+      </ProxyField>
+      {fingerprint.webrtc === '替换' && (
+        <div className="proxy-note">开启WebRTC，将公网IP替换为代理IP</div>
+      )}
+      {fingerprint.webrtc === '允许' && (
+        <div className="proxy-note">开启WebRTC，将使用当前电脑的真实IP</div>
+      )}
+      {fingerprint.webrtc === '禁用' && (
+        <div className="proxy-note">WebRTC被关闭，网站会检测到您关闭了WebRTC</div>
+      )}
+
+      <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '16px 0 8px' }}>
+        <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>显示与硬件</span>
+      </div>
       <ProxyField label="分辨率">
         <CustomSelect
           className="proxy-select"
@@ -195,26 +219,6 @@ export function ProxySettingsTab({
           onChange={(v) => handleFp({ resolution: v })}
         />
       </ProxyField>
-      <ProxyField label="WebRTC">
-        <SegmentedControl values={['替换', '允许', '禁用']} active={fingerprint.webrtc} onChange={(v) => handleFp({ webrtc: v })} />
-      </ProxyField>
-      {fingerprint.webrtc === '替换' && (
-        <div className="proxy-note">开启WebRTC，将公网IP替换为代理IP</div>
-      )}
-      {fingerprint.webrtc === '允许' && (
-        <div className="proxy-note">开启WebRTC，将使用当前电脑的真实IP</div>
-      )}
-      {fingerprint.webrtc === '禁用' && (
-        <div className="proxy-note">WebRTC被关闭，网站会检测到您关闭了WebRTC</div>
-      )}
-      <ProxyField label="Canvas">
-        <Switch enabled={fingerprint.canvas} onChange={(v) => handleFp({ canvas: v })} />
-      </ProxyField>
-      <div className="proxy-note">启用噪音，掩盖真实Canvas</div>
-      <ProxyField label="AudioContext">
-        <Switch enabled={fingerprint.audioContext} onChange={(v) => handleFp({ audioContext: v })} />
-      </ProxyField>
-      <div className="proxy-note">启用噪音，掩盖真实AudioContext</div>
       <ProxyField label="硬件并发数">
         <CustomSelect
           className="proxy-select"
@@ -261,6 +265,20 @@ export function ProxySettingsTab({
         />
       </ProxyField>
       <div className="proxy-note">设置浏览器环境时区，匹配目标地区时间偏好</div>
+
+      <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '16px 0 8px' }}>
+        <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>指纹防检测</span>
+      </div>
+      <ProxyField label="Canvas">
+        <Switch enabled={fingerprint.canvas} onChange={(v) => handleFp({ canvas: v })} />
+      </ProxyField>
+      <div className="proxy-note">启用噪音，掩盖真实Canvas</div>
+      <ProxyField label="AudioContext">
+        <Switch enabled={fingerprint.audioContext} onChange={(v) => handleFp({ audioContext: v })} />
+      </ProxyField>
+      <div className="proxy-note">启用噪音，掩盖真实AudioContext</div>
       <ProxyField label="WebDriver 隐藏">
         <Switch enabled={fingerprint.hideWebdriver} onChange={(v) => handleFp({ hideWebdriver: v })} />
       </ProxyField>
@@ -277,16 +295,7 @@ export function ProxySettingsTab({
         <Switch enabled={fingerprint.fakeOuterSize} onChange={(v) => handleFp({ fakeOuterSize: v })} />
       </ProxyField>
       <div className="proxy-note">伪装窗口尺寸，匹配分辨率数据避免被检测</div>
-      <h3 className="proxy-section-title" id="cookie-section">Cookie</h3>
-      <ProxyField label="Cookie" className="proxy-field--top">
-        <textarea
-          className="proxy-textarea"
-          placeholder="name=value; name2=value2..."
-          value={cookieText ?? ''}
-          onChange={(e) => onChangeCookie?.(e.target.value)}
-        />
-      </ProxyField>
-      <div className="proxy-note">用于登录会话使用，点击底部应用后生效</div>
+      {/* Cookie section removed */}
     </section>
   )
 }

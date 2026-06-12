@@ -4,13 +4,7 @@ import type { ChatSession, ChatMessage, AutoReplyConfig, ChatStats } from '../ty
 import { CustomSelect, Switch, ProxyField } from '../components/ui/BaseUI'
 import { MonitorPanel } from '../components/MonitorPanel'
 import { buildSystemPrompt, interpolateTemplateVars } from '../config/defaults'
-import { ChatHistorySearchPanel } from './ChatHistorySearchPanel'
-import { ScheduledMessagesPanel } from './ScheduledMessagesPanel'
-import { WebhookSettingsPanel } from './WebhookSettingsPanel'
 import { ModelSwitcher } from './ModelSwitcher'
-import { ContactTagsPanel } from './ContactTagsPanel'
-import { RecallMessagesPanel } from './RecallMessagesPanel'
-import { P7SettingsPanel } from './P7SettingsPanel'
 
 export function AutoReplyPanel({
   session,
@@ -33,7 +27,6 @@ export function AutoReplyPanel({
   recentReplyLogs,
   replyFeedbackMap,
   onReplyFeedback,
-  recalledMessages,
 }: {
   session?: ChatSession
   onClose?: () => void
@@ -55,9 +48,8 @@ export function AutoReplyPanel({
   recentReplyLogs?: Array<{ id: string; type: string; content: string; contact: string }>
   replyFeedbackMap?: Record<string, 'up' | 'down'>
   onReplyFeedback?: (id: string, feedback: 'up' | 'down') => void
-  recalledMessages?: Array<{ partition: string; sender: string; content: string; originalContent: string; timestamp: number }>
 }): JSX.Element {
-  const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model' | 'advanced'>('monitor')
+  const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model'>('monitor')
   const [generating, setGenerating] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
@@ -232,7 +224,7 @@ export function AutoReplyPanel({
     }
   }, [activeTab])
 
-  const handleScrollTo = (tab: 'monitor' | 'overview' | 'reply' | 'model' | 'advanced'): void => {
+  const handleScrollTo = (tab: 'monitor' | 'overview' | 'reply' | 'model'): void => {
     setActiveTab(tab)
     // When switching to auto-reply in single mode, auto-set target from quick-reply target if available
     if (tab === 'reply' && autoReplyMode === 'single' && !autoReplyTarget && replyTarget) {
@@ -356,7 +348,6 @@ export function AutoReplyPanel({
         <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => handleScrollTo('overview')}>快捷回复</button>
         <button className={activeTab === 'reply' ? 'active' : ''} onClick={() => handleScrollTo('reply')}>自动回复</button>
         <button className={activeTab === 'model' ? 'active' : ''} onClick={() => handleScrollTo('model')}>大模型设置</button>
-        <button className={activeTab === 'advanced' ? 'active' : ''} onClick={() => handleScrollTo('advanced')}>高级</button>
         <span className="tab-indicator" style={{ left: indicatorStyle.left, width: indicatorStyle.width }} />
       </div>
 
@@ -1051,23 +1042,10 @@ export function AutoReplyPanel({
         </ProxyField>
         <div className="proxy-note">越高话题越新（-2.0 ~ 2.0）</div>
       </>)}
-      {activeTab === 'advanced' && (
-        <>
-          <ModelSwitcher currentModel={config.model} onChange={(model: string) => onUpdateConfig({ model })} />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <ChatHistorySearchPanel partition={session?.partition} />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <ScheduledMessagesPanel partition={session?.partition} />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <WebhookSettingsPanel />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <ContactTagsPanel contacts={chatStats?.contacts ?? []} tagMap={{}} onUpdateTagMap={() => {}} />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <RecallMessagesPanel recalls={recalledMessages ?? []} />
-          <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
-          <P7SettingsPanel config={config} onUpdateConfig={onUpdateConfig} />
-        </>
-      )}
+      {activeTab === 'model' && (<>
+        <ModelSwitcher currentModel={config.model} onChange={(model: string) => onUpdateConfig({ model })} />
+        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
+      </>)}
       </div>
     </aside>
   )
