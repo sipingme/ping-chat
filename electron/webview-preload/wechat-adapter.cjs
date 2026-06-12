@@ -157,6 +157,45 @@ const wechatAdapter = {
     return msgs
   },
 
+  /**
+   * Extract recent messages from the target user, starting from the newest (top)
+   * and stopping when a self message is encountered.
+   */
+  extractRecentUserMessages(partition, targetUser) {
+    const msgs = []
+    const msgEls = document.querySelectorAll('.message')
+    for (const el of Array.from(msgEls)) {
+      if (el.classList.contains('message_system')) continue
+
+      let text = el.querySelector('.js_message_plain')?.innerText?.trim()
+      if (!text) {
+        text = el.querySelector('.plain pre')?.innerText?.trim()
+      }
+      if (!text) {
+        text = el.innerText?.trim()
+      }
+      if (!text) continue
+
+      const avatarImg = el.querySelector('img.avatar')
+      const name = avatarImg?.getAttribute('title') || '对方'
+      const isSelf = el.classList.contains('me')
+
+      if (isSelf) break // stop at self message
+
+      // If targetUser specified, only collect messages from that user
+      if (targetUser && name !== targetUser) continue
+
+      msgs.push({
+        partition,
+        sender: name,
+        content: text,
+        isFromUser: true,
+        timestamp: Date.now(),
+      })
+    }
+    return msgs
+  },
+
   async extractChatListStats(partition) {
     const items = document.querySelectorAll('.chat_item')
     let groupCount = 0

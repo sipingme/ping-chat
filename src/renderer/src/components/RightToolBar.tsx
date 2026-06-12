@@ -1,4 +1,4 @@
-import { Headphones, Loader2, MessagesSquare, Server } from 'lucide-react'
+import { Headphones, Info, Loader2, MessagesSquare, Server } from 'lucide-react'
 
 export function RightToolBar({
   activeTool,
@@ -11,8 +11,8 @@ export function RightToolBar({
   disabled?: boolean
   autoReplyProcessing?: boolean
 }): JSX.Element {
-  const handleClick = (id: string) => {
-    if (disabled) return
+  const handleClick = (id: string, isBottom = false) => {
+    if (disabled && !isBottom) return
     if (activeTool === id) {
       onSelectTool('')
     } else {
@@ -25,7 +25,8 @@ export function RightToolBar({
   ]
 
   const bottomTools = [
-    { id: 'support', label: '联系客服', icon: <Headphones size={18} /> }
+    { id: 'about', label: '关于', icon: <Info size={18} /> },
+    { id: 'support', label: '联系客服', icon: <Headphones size={18} /> },
   ]
 
   return (
@@ -47,7 +48,7 @@ export function RightToolBar({
           <button
             key={tool.id}
             className={`right-tool ${activeTool === tool.id ? 'active' : ''}`}
-            onClick={() => handleClick(tool.id)}
+            onClick={() => handleClick(tool.id, true)}
           >
             {tool.icon}
             <span>{tool.label}</span>

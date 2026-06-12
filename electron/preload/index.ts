@@ -27,6 +27,7 @@ const api = {
   setReplyFeedback: (id: string, feedback: 'up' | 'down') => ipcRenderer.invoke('reply:feedback', id, feedback),
   exportConfig: () => ipcRenderer.invoke('config:export'),
   importConfig: () => ipcRenderer.invoke('config:import'),
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   checkForUpdate: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),

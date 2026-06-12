@@ -603,6 +603,8 @@ ipcMain.handle('cloud-sync:set', (_event, url: string, apiKey: string, enabled: 
   return true
 })
 
+ipcMain.handle('app:get-version', () => app.getVersion())
+
 // Auto-save cookies + localStorage for all active webview partitions before quit
 app.on('before-quit', async () => {
   const partitions = [...webviewRegistry.keys()].filter(Boolean)

@@ -24,6 +24,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 
 const ProxyEnvironmentPanel = lazy(() => import('./panels/ProxyEnvironmentPanel').then(m => ({ default: m.ProxyEnvironmentPanel })))
 const AutoReplyPanel = lazy(() => import('./panels/AutoReplyPanel').then(m => ({ default: m.AutoReplyPanel })))
+const UpdatePanel = lazy(() => import('./panels/UpdatePanel').then(m => ({ default: m.UpdatePanel })))
 
 function XhsIcon(): JSX.Element {
   return <span className="text-icon xhs">红</span>
@@ -550,7 +551,7 @@ export function App(): JSX.Element {
     <TooltipPrimitive.Provider delayDuration={0}>
       <div className="app-shell">
         <TitleBar onlineCount={onlineCount} offlineCount={offlineCount} onRefresh={refreshSession} />
-        <div className={`workspace ${activeRightTool === 'environment' || activeRightTool === 'reply' ? '' : 'no-proxy-panel'}`}>
+        <div className={`workspace ${activeRightTool === 'environment' || activeRightTool === 'reply' || activeRightTool === 'about' ? '' : 'no-proxy-panel'}`}>
           <PlatformSidebar activePlatformId={activePlatformId} onSelectPlatform={selectPlatform} platforms={platforms} theme={theme} onToggleTheme={handleToggleTheme} locale={locale} onToggleLocale={handleToggleLocale} />
           <ConversationSidebar
             platform={activePlatform}
@@ -607,6 +608,13 @@ export function App(): JSX.Element {
                   replyFeedbackMap={replyFeedbackMap}
                   onReplyFeedback={handleReplyFeedback}
                 />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+          {activeRightTool === 'about' && (
+            <ErrorBoundary>
+              <Suspense fallback={<div style={{ width: 320, padding: 24, color: '#8c96a1' }}>加载中...</div>}>
+                <UpdatePanel onClose={() => setActiveRightTool('')} />
               </Suspense>
             </ErrorBoundary>
           )}

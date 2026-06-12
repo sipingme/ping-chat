@@ -24,6 +24,7 @@ interface Window {
     setReplyFeedback: (id: string, feedback: 'up' | 'down') => Promise<boolean>
     exportConfig: () => Promise<{ ok: boolean; path?: string; error?: string }>
     importConfig: () => Promise<{ ok: boolean; error?: string }>
+    getAppVersion: () => Promise<string>
     checkForUpdate: () => Promise<any>
     downloadUpdate: () => Promise<any>
     installUpdate: () => Promise<boolean>

@@ -178,7 +178,58 @@ export const xiaohongshuAdapter = {
     return this.extractMessages(partition)
   },
 
+  /**
+   * Extract recent messages from the target user, starting from the newest (top)
+   * and stopping when a self message is encountered.
+   * The DOM is reverse chronological: top = newest.
+   */
+  extractRecentUserMessages(partition: string, targetUser?: string): ChatMessagePayload[] {
+    const msgs: ChatMessagePayload[] = []
+    const items = document.querySelectorAll('.im-msg-item')
+    if (!items.length) return msgs
+
+    for (const el of Array.from(items)) {
+      const msgDiv = el.querySelector('.left, .right, .center') as HTMLElement | null
+      if (!msgDiv) continue
+      const msgClass = msgDiv.className || ''
+      if (msgClass.includes('center')) continue
+
+      const isFromUser = msgClass.includes('left')
+      if (!isFromUser) break // stop at self message
+
+      // Extract sender name
+      const headerText = el.querySelector('[style*="margin-bottom: 4px"][style*="font-size: 12px"]')?.textContent || ''
+      const nameMatch = headerText.match(/^([^\d\s][^\d]{0,20})\s+\d{4}/)
+      const sender = nameMatch ? nameMatch[1].trim() : '用户'
+
+      // If targetUser specified, only collect messages from that user
+      if (targetUser && sender !== targetUser) continue
+
+      const textEl = msgDiv.querySelector('.text-message') as HTMLElement | null
+      let content = textEl?.textContent?.trim() || ''
+      if (!content) {
+        content = msgDiv.textContent?.trim() || ''
+      }
+      if (!content) continue
+
+      msgs.push({
+        partition,
+        sender,
+        content,
+        isFromUser: true,
+        timestamp: Date.now(),
+      })
+    }
+
+    return msgs
+  },
+
   async extractChatListStats(partition: string) {
+    // Ensure we are on "全部会话" tab so we get the complete contact list
+    this.switchToAllSessions()
+    // Wait briefly for the tab switch to render
+    await new Promise((r) => setTimeout(r, 500))
+
     const items = document.querySelectorAll('.sx-contact-item')
     const contacts: Array<{
       name: string
@@ -192,12 +243,19 @@ export const xiaohongshuAdapter = {
       tags: string[]
     }> = []
     const unreadContacts: typeof contacts = []
+    const seenNames = new Set<string>()
 
     let totalUnread = 0
 
     for (const el of Array.from(items)) {
+      // Skip elements in hidden/inactive tab panels
+      if ((el as HTMLElement).offsetParent === null) continue
+
       const contact = this.extractContactFromElement(el)
       if (!contact) continue
+      // Deduplicate by name
+      if (seenNames.has(contact.name)) continue
+      seenNames.add(contact.name)
 
       const unread = contact.isUnread ? 1 : 0
       const c = {
