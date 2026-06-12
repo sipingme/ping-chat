@@ -5,6 +5,33 @@
   font-size: 13px;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
+  --bg-primary: #0f1011;
+  --bg-secondary: #1a1f23;
+  --bg-tertiary: #252a2e;
+  --bg-hover: #2c3135;
+  --bg-input: #2c3135;
+  --text-primary: #f3f5f7;
+  --text-secondary: #a8afb7;
+  --text-muted: #8c96a1;
+  --border: #2c3135;
+  --accent: #ff2442;
+  --accent-green: #07c160;
+}
+
+.theme-light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f6f7;
+  --bg-tertiary: #eef0f2;
+  --bg-hover: #e5e7ea;
+  --bg-input: #ffffff;
+  --text-primary: #1a1d21;
+  --text-secondary: #5a6169;
+  --text-muted: #8c96a1;
+  --border: #d5d8dc;
+  --accent: #ff2442;
+  --accent-green: #07c160;
+  color: #1a1d21;
+  background: #ffffff;
 }
 
 * {
@@ -460,7 +487,8 @@ button {
   background: #33383e;
 }
 
-.session-card-actions button.spinning svg {
+.session-card-actions button.spinning svg,
+.tiny-icon.spinning svg {
   animation: spin 1s ease-in-out;
 }
 

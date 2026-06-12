@@ -21,7 +21,7 @@ export const wechatAdapter = {
 
   extractContactFromElement(el: Element): { name: string; avatarUrl: string } | null {
     const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
-    const name = nameEl?.innerText?.trim()
+    const name = nameEl?.textContent?.trim()
     if (!name) return null
 
     let avatarEl = el.querySelector('img.img, img.avatar, .avatar img, .user-avatar img') as HTMLImageElement | null
@@ -97,35 +97,75 @@ export const wechatAdapter = {
     return false
   },
 
+  parseMessageElement(el: Element, partition: string): ChatMessagePayload | null {
+    if (el.classList.contains('message_system')) return null
+
+    let text = (el.querySelector('.js_message_plain') as HTMLElement | null)?.textContent?.trim()
+    if (!text) {
+      text = (el.querySelector('.plain pre') as HTMLElement | null)?.textContent?.trim()
+    }
+    if (!text) {
+      text = (el as HTMLElement).textContent?.trim()
+    }
+    if (!text) return null
+
+    const avatarImg = el.querySelector('img.avatar') as HTMLImageElement | null
+    const name = avatarImg?.getAttribute('title') || '对方'
+    const isSelf = el.classList.contains('me')
+
+    return {
+      partition,
+      sender: isSelf ? '我' : name,
+      content: text,
+      isFromUser: !isSelf,
+      timestamp: Date.now(),
+    }
+  },
+
   extractMessages(partition: string): ChatMessagePayload[] {
     const msgs: ChatMessagePayload[] = []
     const msgEls = document.querySelectorAll('.message')
     msgEls.forEach((el) => {
-      let text = (el.querySelector('.js_message_plain') as HTMLElement | null)?.innerText?.trim()
-      if (!text) {
-        text = (el.querySelector('.plain pre') as HTMLElement | null)?.innerText?.trim()
+      const msg = this.parseMessageElement(el, partition)
+      if (msg) {
+        const key = `${msg.sender}:${msg.content}`
+        if (seen.has(key)) return
+        seen.add(key)
+        msgs.push(msg)
       }
-      if (!text) {
-        text = (el as HTMLElement).innerText?.trim()
-      }
-      if (!text) return
-
-      const avatarImg = el.querySelector('img.avatar') as HTMLImageElement | null
-      const name = avatarImg?.getAttribute('title') || '对方'
-      const isSelf = el.classList.contains('me')
-
-      const key = `${name}:${text}`
-      if (seen.has(key)) return
-      seen.add(key)
-
-      msgs.push({
-        partition,
-        sender: isSelf ? '我' : name,
-        content: text,
-        isFromUser: !isSelf,
-        timestamp: Date.now(),
-      })
     })
+    return msgs
+  },
+
+  extractMessagesFromNodes(partition: string, nodes: Node[]): ChatMessagePayload[] {
+    const msgs: ChatMessagePayload[] = []
+    const localSeen = new Set<string>()
+
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) continue
+      const items: Element[] = []
+      if (node.matches && node.matches('.message')) {
+        items.push(node)
+      }
+      if (node.querySelectorAll) {
+        items.push(...Array.from(node.querySelectorAll('.message')))
+      }
+      for (const el of items) {
+        const msg = this.parseMessageElement(el, partition)
+        if (msg) {
+          const key = `${msg.sender}:${msg.content}`
+          if (seen.has(key)) continue
+          if (localSeen.has(key)) continue
+          seen.add(key)
+          localSeen.add(key)
+          msgs.push(msg)
+        }
+      }
+    }
+
+    if (msgs.length > 0) {
+      console.log('[WeChat] extractMessagesFromNodes: found', msgs.length, 'new msg(s) from', nodes.length, 'added node(s)')
+    }
     return msgs
   },
 
@@ -133,33 +173,11 @@ export const wechatAdapter = {
     const msgs: ChatMessagePayload[] = []
     const msgEls = document.querySelectorAll('.message')
     msgEls.forEach((el, i) => {
-      if (el.classList.contains('message_system')) return
-
-      let text = (el.querySelector('.js_message_plain') as HTMLElement | null)?.innerText?.trim()
-      if (!text) {
-        text = (el.querySelector('.plain pre') as HTMLElement | null)?.innerText?.trim()
+      const msg = this.parseMessageElement(el, partition)
+      if (msg) {
+        if (i < 3) console.log('[ChatStats] msg', i, 'sender:', msg.sender, 'isSelf:', !msg.isFromUser, 'text:', msg.content.slice(0, 30))
+        msgs.push(msg)
       }
-      if (!text) {
-        text = (el as HTMLElement).innerText?.trim()
-      }
-      if (!text) {
-        if (i < 3) console.log('[ChatStats] msg', i, 'no text, classes:', el.className)
-        return
-      }
-
-      const avatarImg = el.querySelector('img.avatar') as HTMLImageElement | null
-      const name = avatarImg?.getAttribute('title') || '对方'
-      const isSelf = el.classList.contains('me')
-
-      if (i < 3) console.log('[ChatStats] msg', i, 'sender:', name, 'isSelf:', isSelf, 'text:', text.slice(0, 30))
-
-      msgs.push({
-        partition,
-        sender: isSelf ? '我' : name,
-        content: text,
-        isFromUser: !isSelf,
-        timestamp: Date.now(),
-      })
     })
     console.log('[ChatStats] extractAllMessages returning', msgs.length, 'messages')
     return msgs

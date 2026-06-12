@@ -68,10 +68,12 @@ export const xiaohongshuAdapter = {
     return { name, avatarUrl, lastMessage, time, isUnread, isOverdue, userId, tags }
   },
 
-  selectChat(contactName: string): boolean {
+  async selectChat(contactName: string): Promise<boolean> {
     const scroller = document.querySelector('.vue-recycle-scroller') as HTMLElement | null
     let attempts = 0
     const maxAttempts = 10
+
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
     while (attempts < maxAttempts) {
       const items = document.querySelectorAll('.sx-contact-item')
@@ -83,12 +85,9 @@ export const xiaohongshuAdapter = {
           return true
         }
       }
-      // scroll to find more items
       if (scroller) {
         scroller.scrollTop += 200
-        // wait a tick for Vue to render
-        const start = Date.now()
-        while (Date.now() - start < 300) { /* busy wait for render */ }
+        await wait(300)
       } else {
         break
       }
@@ -98,10 +97,38 @@ export const xiaohongshuAdapter = {
     return false
   },
 
+  parseMessageElement(el: Element, partition: string): ChatMessagePayload | null {
+    const msgDiv = el.querySelector('.left, .right, .center') as HTMLElement | null
+    if (!msgDiv) return null
+
+    const msgClass = msgDiv.className || ''
+    if (msgClass.includes('center')) return null
+
+    const isFromUser = msgClass.includes('left')
+
+    let sender = isFromUser ? '用户' : '我'
+    const headerText = el.querySelector('[style*="margin-bottom: 4px"][style*="font-size: 12px"]')?.textContent || ''
+    const nameMatch = headerText.match(/^([^\d\s][^\d]{0,20})\s+\d{4}/)
+    if (nameMatch) sender = nameMatch[1].trim()
+
+    const textEl = msgDiv.querySelector('.text-message') as HTMLElement | null
+    let content = textEl?.textContent?.trim() || ''
+    if (!content) {
+      content = msgDiv.textContent?.trim() || ''
+    }
+    if (!content) return null
+
+    return {
+      partition,
+      sender,
+      content,
+      isFromUser,
+      timestamp: Date.now(),
+    }
+  },
+
   extractMessages(partition: string): ChatMessagePayload[] {
     const msgs: ChatMessagePayload[] = []
-
-    // XHS messages live inside vue-recycle-scroller; top-level message item is .im-msg-item
     const items = document.querySelectorAll('.im-msg-item')
     if (!items.length) {
       console.log('[XHS] extractMessages: no .im-msg-item found')
@@ -111,39 +138,39 @@ export const xiaohongshuAdapter = {
 
     items.forEach((el) => {
       if ((el as HTMLElement).offsetParent === null) return
-
-      // Direction is determined by the inner msg div class: left = user, right = self, center = system
-      const msgDiv = el.querySelector('.left, .right, .center') as HTMLElement | null
-      if (!msgDiv) return
-
-      const msgClass = msgDiv.className || ''
-      if (msgClass.includes('center')) return // skip system hints
-
-      const isFromUser = msgClass.includes('left')
-
-      // Try to get sender name from the header row
-      let sender = isFromUser ? '用户' : '我'
-      const headerText = el.querySelector('[style*="margin-bottom: 4px"][style*="font-size: 12px"]')?.textContent || ''
-      const nameMatch = headerText.match(/^([^\d\s][^\d]{0,20})\s+\d{4}/)
-      if (nameMatch) sender = nameMatch[1].trim()
-
-      // Text content
-      const textEl = msgDiv.querySelector('.text-message') as HTMLElement | null
-      let content = textEl?.innerText?.trim() || ''
-      // Fallback for cards / other types
-      if (!content) {
-        content = msgDiv.innerText?.trim() || ''
-      }
-      if (!content) return
-
-      msgs.push({
-        partition,
-        sender,
-        content,
-        isFromUser,
-        timestamp: Date.now(),
-      })
+      const msg = this.parseMessageElement(el, partition)
+      if (msg) msgs.push(msg)
     })
+    return msgs
+  },
+
+  extractMessagesFromNodes(partition: string, nodes: Node[]): ChatMessagePayload[] {
+    const msgs: ChatMessagePayload[] = []
+    const seen = new Set<string>()
+
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) continue
+      const items: Element[] = []
+      if (node.matches && node.matches('.im-msg-item')) {
+        items.push(node)
+      }
+      if (node.querySelectorAll) {
+        items.push(...Array.from(node.querySelectorAll('.im-msg-item')))
+      }
+      for (const el of items) {
+        const msg = this.parseMessageElement(el, partition)
+        if (msg) {
+          const key = `${msg.sender}:${msg.content}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          msgs.push(msg)
+        }
+      }
+    }
+
+    if (msgs.length > 0) {
+      console.log('[XHS] extractMessagesFromNodes: found', msgs.length, 'new msg(s) from', nodes.length, 'added node(s)')
+    }
     return msgs
   },
 

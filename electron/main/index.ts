@@ -2,6 +2,15 @@ import { app, BrowserWindow, ipcMain, session, net, globalShortcut } from 'elect
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { initLogger, logReply, getReplyLogs, getReplyStats, updateReplyFeedback } from './reply-logger'
+import { appendChatMessage, getChatHistory, clearChatHistory, searchChatHistory, exportChatHistory } from './chat-history-store'
+import { exportConfig, importConfig } from './config-transfer'
+import { initAutoUpdater } from './auto-updater'
+import { setWebhookConfig, getWebhookConfig, sendWebhook } from './webhook-server'
+import { scheduleMessage, cancelScheduledMessage, getScheduledMessages, runScheduler } from './scheduler'
+import { saveCredential, loadCredential, deleteCredential } from './credential-store'
+import { setSensitiveWords, checkSensitiveWords } from './sensitive-word-filter'
+import { syncData, setCloudSyncConfig } from './cloud-sync'
 
 // swallow EPIPE from broken dev-server pipes
 for (const stream of [process.stdout, process.stderr]) {
@@ -11,14 +20,40 @@ for (const stream of [process.stdout, process.stderr]) {
   })
 }
 
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  console.error('[Main] uncaughtException:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[Main] unhandledRejection:', reason)
+})
+
 // 各 partition 的指纹配置
 const fingerprintStore = new Map<string, any>()
 
 const DATA_DIR = join(app.getPath('userData'), 'ping-chat-data')
 const SESSIONS_FILE = join(DATA_DIR, 'sessions.json')
+const CONFIG_FILE = join(DATA_DIR, 'config.json')
 const COOKIE_DIR = join(DATA_DIR, 'cookies')
 const LOCALSTORAGE_DIR = join(DATA_DIR, 'localstorage')
 const webviewRegistry = new Map<string, number>() // partition -> webContentsId
+
+function getPlatformFromPartition(partition: string): string | null {
+  if (!partition) return null
+  const match = partition.match(/^persist:([^/-]+)/)
+  return match ? match[1] : null
+}
+
+function getPlatformBaseUrl(platform: string | null): string {
+  switch (platform) {
+    case 'wechat':
+      return 'https://web.wechat.com'
+    case 'xiaohongshu':
+      return 'https://sxt.xiaohongshu.com'
+    default:
+      return 'https://xiaohongshu.com'
+  }
+}
 
 function ensureDataDir(): void {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
@@ -43,6 +78,27 @@ function saveSessions(sessions: any[]): void {
     writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2))
   } catch (e) {
     console.error('[SessionStore] save error:', e)
+  }
+}
+
+function loadConfig(): Record<string, any> {
+  ensureDataDir()
+  try {
+    if (existsSync(CONFIG_FILE)) {
+      return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'))
+    }
+  } catch (e) {
+    console.error('[ConfigStore] load error:', e)
+  }
+  return {}
+}
+
+function saveConfig(config: Record<string, any>): void {
+  ensureDataDir()
+  try {
+    writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2))
+  } catch (e) {
+    console.error('[ConfigStore] save error:', e)
   }
 }
 
@@ -85,6 +141,31 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
     webContents.openDevTools({ mode: 'detach' })
+
+    // Crash recovery
+    webContents.on('render-process-gone', (_event, details) => {
+      console.error('[Main] webview render-process-gone:', details.reason, details.exitCode)
+      setTimeout(() => {
+        if (!webContents.isDestroyed()) {
+          console.log('[Main] reloading crashed webview')
+          webContents.reload()
+        }
+      }, 2000)
+    })
+
+    // Network error recovery
+    webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return
+      // Ignore abort and redirect errors
+      if (errorCode === -3 || errorCode === -1) return // -3 = ABORTED, -1 = CANCELED (redirects)
+      console.error('[Main] webview did-fail-load:', errorCode, errorDescription, validatedURL)
+      setTimeout(() => {
+        if (!webContents.isDestroyed()) {
+          console.log('[Main] reloading webview after failed load')
+          webContents.reload()
+        }
+      }, 3000)
+    })
   })
 
   // F12 toggles DevTools for the focused BrowserWindow
@@ -97,6 +178,21 @@ function createWindow(): void {
     }
   })
 
+  // Global shortcuts
+  globalShortcut.register('CommandOrControl+Shift+R', () => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('shortcut:toggle-auto-reply')
+    }
+  })
+
+  globalShortcut.register('CommandOrControl+Shift+N', () => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('shortcut:new-session')
+    }
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     console.log('[Main] Loading dev URL:', process.env.ELECTRON_RENDERER_URL)
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -106,6 +202,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  ensureDataDir()
+  initLogger(DATA_DIR)
+  initAutoUpdater()
+  initScheduler()
   electronApp.setAppUserModelId('com.ping.chat')
 
   app.on('browser-window-created', (_, window) => {
@@ -197,7 +297,8 @@ app.whenReady().then(() => {
   ipcMain.handle('cookie:set', async (_event, partition: string, cookieText: string) => {
     const sess = session.fromPartition(partition)
     const entries = cookieText.split(/;\s*/).map((s) => s.trim()).filter(Boolean)
-    const url = `https://xiaohongshu.com` // generic fallback
+    const platform = getPlatformFromPartition(partition)
+    const url = getPlatformBaseUrl(platform)
     for (const entry of entries) {
       const eq = entry.indexOf('=')
       if (eq === -1) continue
@@ -294,17 +395,83 @@ app.whenReady().then(() => {
     return true
   })
 
+  ipcMain.handle('config:get', (_event, key: string) => {
+    const config = loadConfig()
+    return config[key] ?? null
+  })
+
+  ipcMain.handle('config:set', (_event, key: string, value: any) => {
+    const config = loadConfig()
+    config[key] = value
+    saveConfig(config)
+    return true
+  })
+
+  ipcMain.handle('config:getAll', () => {
+    return loadConfig()
+  })
+
+  ipcMain.handle('reply:log', (_event, entry: any) => {
+    return logReply(entry)
+  })
+
+  ipcMain.handle('reply:list', (_event, options?: any) => {
+    return getReplyLogs(options)
+  })
+
+  ipcMain.handle('reply:stats', () => {
+    return getReplyStats()
+  })
+
+  ipcMain.handle('reply:feedback', (_event, id: string, feedback: 'up' | 'down') => {
+    return updateReplyFeedback(id, feedback)
+  })
+
+  ipcMain.handle('config:export', () => exportConfig(DATA_DIR))
+  ipcMain.handle('config:import', () => importConfig(DATA_DIR))
+
   /* ── Auto Reply IPC relay ── */
   ipcMain.handle('chat:register', (event, partition: string) => {
     webviewRegistry.set(partition, event.sender.id)
   })
 
   ipcMain.on('chat:message', (event, payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => {
+    // Persist message to store
+    appendChatMessage(payload.partition, payload)
+    // Send webhook
+    void sendWebhook('chat:message', payload)
+    // Cloud sync
+    void syncData(payload.partition, payload)
     // Forward to main renderer window
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (mainWindow) {
       mainWindow.webContents.send('chat:message', payload)
     }
+  })
+
+  ipcMain.on('chat:recall', (event, payload: { partition: string; sender: string; content: string; timestamp: number }) => {
+    void sendWebhook('chat:recall', payload)
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('chat:recall', payload)
+    }
+  })
+
+  ipcMain.handle('chat:history:get', (_event, partition: string, limit?: number) => {
+    return getChatHistory(partition, limit ?? 100)
+  })
+
+  ipcMain.handle('chat:history:clear', (_event, partition: string) => {
+    clearChatHistory(partition)
+    return true
+  })
+
+  ipcMain.handle('chat:history:search', (_event, partition: string, options: any) => {
+    return searchChatHistory(partition, options)
+  })
+
+  ipcMain.handle('chat:history:export', (_event, partition: string, format: 'json' | 'csv') => {
+    return exportChatHistory(partition, format)
   })
 
   ipcMain.on('chat:history', (_event, payload: { partition: string; history: Array<{ sender: string; content: string; isFromUser: boolean; timestamp: number }> }) => {
@@ -374,6 +541,66 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+})
+
+function initScheduler(): void {
+  runScheduler((partition, content, autoSend) => {
+    const webviewId = webviewRegistry.get(partition)
+    if (webviewId) {
+      const wc = BrowserWindow.fromId(webviewId)?.webContents
+      wc?.send('chat:scheduled-send', { partition, content, autoSend })
+    }
+  })
+}
+
+// IPC handlers for webhook and scheduler
+ipcMain.handle('webhook:set', (_event, url: string, enabled: boolean) => {
+  setWebhookConfig(url, enabled)
+  return true
+})
+
+ipcMain.handle('webhook:get', () => {
+  return getWebhookConfig()
+})
+
+ipcMain.handle('scheduler:add', (_event, partition: string, content: string, delayMs: number, autoSend?: boolean) => {
+  return scheduleMessage(partition, content, delayMs, autoSend ?? true)
+})
+
+ipcMain.handle('scheduler:cancel', (_event, id: string) => {
+  return cancelScheduledMessage(id)
+})
+
+ipcMain.handle('scheduler:list', (_event, partition?: string) => {
+  return getScheduledMessages(partition)
+})
+
+// Credential store IPC handlers
+ipcMain.handle('credential:save', (_event, key: string, value: string) => {
+  return saveCredential(key, value)
+})
+
+ipcMain.handle('credential:load', (_event, key: string) => {
+  return loadCredential(key)
+})
+
+ipcMain.handle('credential:delete', (_event, key: string) => {
+  deleteCredential(key)
+  return true
+})
+
+ipcMain.handle('sensitive-words:set', (_event, words: string[]) => {
+  setSensitiveWords(words)
+  return true
+})
+
+ipcMain.handle('sensitive-words:check', (_event, text: string) => {
+  return checkSensitiveWords(text)
+})
+
+ipcMain.handle('cloud-sync:set', (_event, url: string, apiKey: string, enabled: boolean) => {
+  setCloudSyncConfig(url, apiKey, enabled)
+  return true
 })
 
 // Auto-save cookies + localStorage for all active webview partitions before quit

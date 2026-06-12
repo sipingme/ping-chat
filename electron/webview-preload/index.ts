@@ -902,7 +902,7 @@ function startAutoReplyScraper(partition: string) {
     // ── IPC listeners delegated to adapter ─────────────
     ipcRenderer.on('chat:select', (_event, payload: { partition: string; contactName: string }) => {
       console.log('[ChatStats] selectChat request for:', payload.contactName)
-      adapter.selectChat(payload.contactName)
+      void adapter.selectChat(payload.contactName)
     })
 
     ipcRenderer.on('chat:reply', (_event, payload: { partition: string; content: string; autoSend?: boolean }) => {
@@ -916,20 +916,57 @@ function startAutoReplyScraper(partition: string) {
       msgs.forEach((m) => ipcRenderer.send('chat:message', m))
     }, 3000)
 
-    // Observe for new messages
+    // Anti-recall: cache all messages by content hash
+    const messageCache = new Map<string, { sender: string; content: string; timestamp: number }>()
+    function getCacheKey(sender: string, content: string): string {
+      return `${sender}:${content}`
+    }
+
+    // Observe for new messages and recalls
     const observer = new MutationObserver((mutations) => {
-      let hasNew = false
+      const addedNodes: Node[] = []
       for (const mut of mutations) {
-        if (mut.type === 'childList' && mut.addedNodes.length > 0) {
-          hasNew = true
-          break
+        if (mut.type === 'childList') {
+          mut.addedNodes.forEach((node) => addedNodes.push(node))
         }
       }
-      if (!hasNew) return
-      const newMsgs = adapter.extractMessages(partition)
-      newMsgs.forEach((m) => ipcRenderer.send('chat:message', m))
+
+      let newMsgs: ChatMessagePayload[] = []
+      if (typeof (adapter as any).extractMessagesFromNodes === 'function') {
+        newMsgs = (adapter as any).extractMessagesFromNodes(partition, addedNodes)
+      }
+      if (newMsgs.length === 0 && addedNodes.length > 0) {
+        newMsgs = adapter.extractMessages(partition)
+      }
+      newMsgs.forEach((m) => {
+        ipcRenderer.send('chat:message', m)
+        messageCache.set(getCacheKey(m.sender, m.content), { sender: m.sender, content: m.content, timestamp: m.timestamp })
+      })
+
+      // Detect message recalls
+      for (const mut of mutations) {
+        if (mut.type === 'childList') continue
+        const target = mut.target as HTMLElement | null
+        if (!target) continue
+        const text = target.textContent || ''
+        if (text.includes('撤回') || text.includes('recalled') || text.includes('已撤回')) {
+          const msgEl = target.closest('.message, .im-msg-item, .msg')
+          if (msgEl) {
+            const name = msgEl.querySelector('.nickname, .nickname_text, .user-name')?.textContent || 'unknown'
+            // Try to find original content from cache
+            let originalContent = ''
+            for (const [key, value] of messageCache) {
+              if (key.startsWith(`${name}:`)) {
+                originalContent = value.content
+                break
+              }
+            }
+            ipcRenderer.send('chat:recall', { partition, sender: name, content: text, originalContent, timestamp: Date.now() })
+          }
+        }
+      }
     })
-    observer.observe(document.body, { childList: true, subtree: true })
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
 
     // Send full conversation history every 5s for the reply workbench
     setInterval(() => {
