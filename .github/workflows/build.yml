@@ -6,12 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -27,7 +25,13 @@ jobs:
           node-version: 22
           cache: 'pnpm'
 
-      - run: pnpm install --frozen-lockfile
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 libgtk-3-0 libnotify-dev libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libgbm-dev
+
+      - run: pnpm install
 
       - run: pnpm run build
 
@@ -45,6 +49,7 @@ jobs:
             release/*.dmg
             release/latest-mac.yml
             release/*.zip
+          if-no-files-found: warn
 
       - name: Upload artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -55,6 +60,7 @@ jobs:
             release/*.exe
             release/latest.yml
             release/*.blockmap
+          if-no-files-found: warn
 
       - name: Upload artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -62,6 +68,6 @@ jobs:
         with:
           name: linux-artifacts
           path: |
-            release/*.snap
             release/*.AppImage
             release/latest-linux.yml
+          if-no-files-found: warn

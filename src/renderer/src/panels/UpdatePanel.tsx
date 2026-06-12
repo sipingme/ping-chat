@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, RefreshCw, RotateCcw, ShieldCheck, X } from 'lucide-react'
+import { Bot, Download, MessageCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Wifi, X } from 'lucide-react'
 
 type UpdateState =
   | { status: 'idle' }
@@ -89,9 +89,54 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
           <ShieldCheck size={28} color="#19d973" />
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#f3f5f7' }}>Ping Chat</div>
-            <div style={{ fontSize: 12, color: '#8c96a1' }}>当前版本 {currentVersion || '—'}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#f3f5f7' }}>PingChat</div>
+            <div style={{ fontSize: 13, color: '#8c96a1' }}>当前版本 {currentVersion || '—'}</div>
           </div>
+        </div>
+
+        <div style={{ fontSize: 13, color: '#f3f5f7', lineHeight: 1.6, marginBottom: 16 }}>
+          PingChat 是一款面向商家与客服团队的多平台社交聚合工具，支持微信、小红书等主流平台的一站式会话管理、AI 智能自动回复、浏览器指纹伪装与代理环境配置。内置强大的客服工作台，可实时监控多账号消息动态，智能分配客户对话，大幅提升客服响应效率与运营转化。
+        </div>
+
+        {/* Features */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+          {[
+            { icon: <MessageCircle size={16} />, text: '多平台聚合' },
+            { icon: <Bot size={16} />, text: 'AI 自动回复' },
+            { icon: <Wifi size={16} />, text: '代理环境管理' },
+            { icon: <Sparkles size={16} />, text: '浏览器指纹伪装' },
+          ].map((f, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                borderRadius: 6,
+                background: '#252a2e',
+                border: '1px solid #2c3135',
+                fontSize: 13,
+                color: '#f3f5f7',
+                fontWeight: 500,
+                transition: 'all 0.2s ease',
+                cursor: 'default',
+              }}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget
+                el.style.borderColor = '#19d973'
+                el.style.background = '#1f2823'
+              }}
+              onMouseLeave={(e) => {
+                const el = e.currentTarget
+                el.style.borderColor = '#2c3135'
+                el.style.background = '#252a2e'
+              }}
+            >
+              <span style={{ color: '#19d973', flexShrink: 0, display: 'flex', alignItems: 'center' }}>{f.icon}</span>
+              {f.text}
+            </div>
+          ))}
         </div>
 
         <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
@@ -99,7 +144,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
         {/* Update status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
           <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>版本更新</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: '#f3f5f7' }}>版本更新</span>
         </div>
 
         <div
@@ -124,7 +169,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                   boxShadow: `0 0 6px ${statusColor(updateState.status)}40`,
                 }}
               />
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#f3f5f7' }}>
                 {updateState.status === 'idle' && '等待检测'}
                 {updateState.status === 'checking' && '正在检测…'}
                 {updateState.status === 'available' && `发现新版本 ${updateState.version}`}
@@ -139,7 +184,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           {updateState.status === 'available' && (
             <>
               {updateState.releaseNotes && (
-                <div style={{ fontSize: 12, color: '#8c96a1', marginBottom: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', padding: '8px 0' }}>
+                <div style={{ fontSize: 13, color: '#8c96a1', marginBottom: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', padding: '8px 0' }}>
                   {updateState.releaseNotes}
                 </div>
               )}
@@ -152,7 +197,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                   border: 'none',
                   background: '#19d973',
                   color: '#0a0e10',
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
@@ -164,7 +209,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                 onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = '0.85' }}
                 onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = '1' }}
               >
-                <Download size={15} />
+                <Download size={16} />
                 下载更新
               </button>
             </>
@@ -173,8 +218,8 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           {updateState.status === 'downloading' && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: '#8c96a1' }}>下载进度</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#f3f5f7' }}>{updateState.percent}%</span>
+                <span style={{ fontSize: 13, color: '#8c96a1' }}>下载进度</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>{updateState.percent}%</span>
               </div>
               <div style={{ width: '100%', height: 5, borderRadius: 3, background: '#252a2e', overflow: 'hidden' }}>
                 <div
@@ -200,7 +245,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                 border: 'none',
                 background: '#19d973',
                 color: '#0a0e10',
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: 700,
                 cursor: 'pointer',
                 display: 'flex',
@@ -212,13 +257,13 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
               onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = '0.85' }}
               onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = '1' }}
             >
-              <RotateCcw size={15} />
+              <RotateCcw size={16} />
               重启并安装
             </button>
           )}
 
           {updateState.status === 'error' && (
-            <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 10, lineHeight: 1.4 }}>
+            <div style={{ fontSize: 13, color: '#ef4444', marginBottom: 10, lineHeight: 1.4 }}>
               {updateState.message}
             </div>
           )}
@@ -237,7 +282,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
                 border: isChecking ? '1px solid #1f2528' : '1px solid #19d973',
                 background: isChecking ? '#14181b' : 'transparent',
                 color: isChecking ? '#5a6269' : '#19d973',
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: 700,
                 cursor: isChecking ? 'not-allowed' : 'pointer',
                 display: 'flex',
