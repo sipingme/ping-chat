@@ -25,7 +25,7 @@ export function RightToolBar({
   ]
 
   const bottomTools = [
-    { id: 'about', label: '关于', icon: <Info size={18} /> },
+    { id: 'about', label: '关于我们', icon: <Info size={18} /> },
     { id: 'support', label: '联系客服', icon: <Headphones size={18} /> },
   ]
 

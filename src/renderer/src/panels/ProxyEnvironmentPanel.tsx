@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown, CircleHelp, Eraser, MessageSquare, Plus, Send, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
+import { ChevronDown, CircleHelp, Eraser, MessageSquare, Plus, Send, SlidersHorizontal, Trash2, X, Zap } from 'lucide-react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import type { ChatSession, FingerprintSettings, ProxyConfig } from '../types'
 import { CustomSelect, SegmentedControl, Switch, ProxyField } from '../components/ui/BaseUI'
@@ -85,7 +85,7 @@ export function ProxyEnvironmentPanel({
         <div className="translation-title">
           <span>代理环境</span>
         </div>
-        <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
+        <button className="translation-menu" onClick={() => onClose?.()}><X size={14} /></button>
       </div>
 
       {!session ? (

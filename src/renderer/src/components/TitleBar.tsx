@@ -22,11 +22,11 @@ export function TitleBar({ onlineCount, offlineCount, onRefresh }: { onlineCount
         <span className="brand-name">PingChat {version || '—'}</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
         <span>离线: <b className="red">0</b></span>
-        <button className={`tiny-icon${spinning ? ' spinning' : ''}`} onClick={handleRefresh} onAnimationEnd={() => setSpinning(false)}><RefreshCw size={12} /></button>
+        <span style={{ fontSize: 11, color: '#8c96a1', marginLeft: 0, paddingLeft: 12, borderLeft: '1px solid #2a2d30' }}>刷新页面</span>
+        <button className={`tiny-icon${spinning ? ' spinning' : ''}`} style={{ marginLeft: -8 }} onClick={handleRefresh} onAnimationEnd={() => setSpinning(false)}><RefreshCw size={12} /></button>
       </div>
       <div className="title-spacer" />
       <div className="top-actions">
-        <span className="secure"><span className="status-dot" />已连接安全加密线路</span>
         <button className="link-button">24小时客服</button>
         <button className="recharge">到后台管理</button>
       </div>

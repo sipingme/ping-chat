@@ -65,7 +65,7 @@ export function MonitorPanel({ session, monitoringEnabled, onToggleMonitoring, c
       <div className="proxy-note" style={{ marginLeft: 0, textAlign: 'left' }}>开启后，每 5 秒自动扫描并上报聊天列表状态</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '20px 0 12px' }}>
         <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>用户信息列表</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>用户列表</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: isWechat ? '1fr 1fr' : '1fr', gap: 8, marginBottom: 12 }}>
         <button className="secondary-action" style={{ padding: '10px 12px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', textAlign: 'left', cursor: monitoringEnabled ? 'pointer' : 'default' }} onClick={() => { if (monitoringEnabled) { setShowUserList((v) => !v); setShowGroupList(false) } }}>
@@ -131,7 +131,7 @@ export function MonitorPanel({ session, monitoringEnabled, onToggleMonitoring, c
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '20px 0 12px' }}>
         <div style={{ width: 3, height: 14, borderRadius: 2, background: '#19d973' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>用户消息监控</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#f3f5f7' }}>消息监控</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
         <div style={{ padding: '10px 12px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135' }}>
@@ -145,7 +145,7 @@ export function MonitorPanel({ session, monitoringEnabled, onToggleMonitoring, c
       </div>
 
       {monitoringEnabled && (<>
-        {(!chatStats || (chatStats.totalCount === 0 && messages.length === 0)) ? (
+        {(!chatStats || chatStats.totalCount === 0) ? (
           <div style={{ padding: '16px 12px', borderRadius: 6, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
             <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无监控数据，请确保{isWechat ? '微信' : '小红书'}已正常登录</span>
           </div>

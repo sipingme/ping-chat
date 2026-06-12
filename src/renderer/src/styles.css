@@ -161,7 +161,6 @@ button {
   height: 20px;
   display: grid;
   place-items: center;
-  border-left: 1px solid #2a2d30;
   color: #9da3aa;
 }
 

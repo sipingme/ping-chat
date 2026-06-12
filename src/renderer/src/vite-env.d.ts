@@ -30,6 +30,8 @@ interface Window {
     installUpdate: () => Promise<boolean>
     onUpdateEvent: (event: 'update:checking' | 'update:available' | 'update:not-available' | 'update:progress' | 'update:downloaded' | 'update:error', callback: (data: any) => void) => () => void
     onShortcut: (event: 'shortcut:toggle-auto-reply' | 'shortcut:new-session', callback: () => void) => () => void
+    onWebviewAttached: (callback: (payload: { wcId: number }) => void) => () => void
+    setWebviewPartition: (wcId: number, partition: string) => void
     sendReply: (partition: string, content: string, autoSend?: boolean) => Promise<boolean>
     selectChat: (partition: string, contactName: string) => Promise<boolean>
     setMonitorEnabled: (partition: string, enabled: boolean) => Promise<boolean>

@@ -1,35 +1,85 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Sparkles, Zap } from 'lucide-react'
 import type { Platform, ChatSession } from '../types'
-import { WECHAT_WEB_URL, XIAOHONGSHU_WEB_URL } from '../config/defaults'
+import { getPlatformById } from '../../../shared/platforms'
 
-export function MainPanel({ session, platform, reloadTrigger }: { session?: ChatSession; platform: Platform; reloadTrigger?: number }): JSX.Element {
-  const hasWebviewPlatform = Boolean(session && (session.platformId === 'wechat' || session.platformId === 'xiaohongshu'))
-  const webviewUrl = session?.platformId === 'wechat' ? WECHAT_WEB_URL : XIAOHONGSHU_WEB_URL
+export function MainPanel({ sessions, activeSession, platform, reloadTrigger }: { sessions: ChatSession[]; activeSession?: ChatSession; platform: Platform; reloadTrigger?: number }): JSX.Element {
+  const activePlatformInfo = activeSession ? getPlatformById(activeSession.platformId) : undefined
+  const hasWebviewPlatform = Boolean(activePlatformInfo?.hasWebview)
 
   useEffect(() => {
-    if (!session) return
-    void window.pingChat.setFingerprint(session.partition, session.fingerprint)
-    void window.pingChat.setProxy(session.partition, session.proxy)
-  }, [session?.id, session?.fingerprint, session?.proxy])
+    if (!activeSession) return
+    void window.pingChat.setFingerprint(activeSession.partition, activeSession.fingerprint)
+    void window.pingChat.setProxy(activeSession.partition, activeSession.proxy)
+  }, [activeSession?.id, activeSession?.fingerprint, activeSession?.proxy])
+
+  const webviewSessions = useMemo(() => sessions?.filter((s) => getPlatformById(s.platformId)?.hasWebview) ?? [], [sessions])
+
+  useEffect(() => {
+    const handlers: Array<{ el: Element; fn: () => void }> = []
+    const setup = () => {
+      const webviews = document.querySelectorAll('webview')
+      for (const wv of webviews) {
+        const el = wv as any
+        const fn = () => {
+          try {
+            const wcId = el.getWebContentsId?.()
+            const partition = el.getAttribute('partition') || ''
+            if (wcId && partition) {
+              console.log('[Renderer] webview dom-ready, reporting partition:', partition, 'wcId:', wcId)
+              window.pingChat.setWebviewPartition(wcId, partition)
+            }
+          } catch (e) {
+            console.error('[Renderer] webview dom-ready error:', e)
+          }
+        }
+        el.addEventListener('dom-ready', fn)
+        handlers.push({ el, fn })
+        if (el.readyState === 'complete') fn()
+      }
+    }
+    const timeout = setTimeout(setup, 500)
+    return () => {
+      clearTimeout(timeout)
+      for (const { el, fn } of handlers) {
+        el.removeEventListener('dom-ready', fn)
+      }
+    }
+  }, [webviewSessions])
 
   return (
-    <main className={`main-panel ${session ? 'with-webview' : ''}`}>
+    <main className={`main-panel ${activeSession ? 'with-webview' : ''}`}>
       {hasWebviewPlatform ? (
         <div className="webview-stage">
-          <webview
-            key={`${session?.id}-${reloadTrigger ?? 0}`}
-            className="platform-webview"
-            src={webviewUrl}
-            partition={session?.partition}
-            allowpopups="true"
-            preload={window.pingChat?.webviewPreloadPath}
-          />
+          {webviewSessions.map((session) => {
+            const platformInfo = getPlatformById(session.platformId)
+            const isActive = session.id === activeSession?.id
+            return (
+              <webview
+                key={`${session.id}-${reloadTrigger ?? 0}`}
+                className="platform-webview"
+                src={platformInfo?.webUrl ?? ''}
+                partition={session.partition}
+                allowpopups="true"
+                preload={window.pingChat?.webviewPreloadPath}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  opacity: isActive ? 1 : 0,
+                  pointerEvents: isActive ? 'auto' : 'none',
+                  zIndex: isActive ? 1 : 0,
+                }}
+              />
+            )
+          })}
         </div>
-      ) : session ? (
+      ) : activeSession ? (
         <div className="empty-state">
           <Sparkles size={72} strokeWidth={1.7} />
-          <span>{platform.name} 网页容器已预留</span>
+          <span>{activePlatformInfo?.name ?? platform.name} 网页容器已预留</span>
         </div>
       ) : (
         <div className="empty-state">

@@ -1,7 +1,4 @@
-import type { Platform, FingerprintSettings, AutoReplyConfig } from '../types'
-
-export const WECHAT_WEB_URL = 'https://web.wechat.com/'
-export const XIAOHONGSHU_WEB_URL = 'https://sxt.xiaohongshu.com/im/login'
+import type { FingerprintSettings, AutoReplyConfig } from '../types'
 
 export const BROWSER_VERSIONS = [
   'Chrome 135', 'Chrome 134', 'Chrome 133', 'Chrome 132', 'Chrome 131', 'Chrome 130',

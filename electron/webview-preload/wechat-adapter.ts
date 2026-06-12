@@ -2,21 +2,21 @@
  * WeChat Web IM adapter for DOM scraping
  */
 
-export interface ChatMessagePayload {
-  partition: string
-  sender: string
-  content: string
-  isFromUser: boolean
-  timestamp: number
-}
+import type { ChatMessagePayload } from './adapter'
+import { defineAdapter } from './adapter'
+
+export type { ChatMessagePayload } from './adapter'
 
 const seen = new Set<string>()
 
-export const wechatAdapter = {
+export const wechatAdapter = defineAdapter({
   name: 'wechat' as const,
 
+  chatItemSelector: '.chat_item' as const,
+
   detect(): boolean {
-    return window.location.hostname.includes('wechat') || window.location.hostname.includes('web.wechat')
+    const h = window.location.hostname
+    return h.includes('wechat') || h.includes('wx2.qq.com')
   },
 
   extractContactFromElement(el: Element): { name: string; avatarUrl: string } | null {
@@ -346,4 +346,4 @@ export const wechatAdapter = {
 
     return true
   },
-}
+})

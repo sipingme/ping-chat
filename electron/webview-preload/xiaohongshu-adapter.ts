@@ -3,13 +3,10 @@
  * DOM structure: vue-recycle-scroller virtual list
  */
 
-export interface ChatMessagePayload {
-  partition: string
-  sender: string
-  content: string
-  isFromUser: boolean
-  timestamp: number
-}
+import type { ChatMessagePayload } from './adapter'
+import { defineAdapter } from './adapter'
+
+export type { ChatMessagePayload } from './adapter'
 
 function getText(el: Element | null, selector: string): string {
   const target = el?.querySelector(selector)
@@ -22,8 +19,17 @@ function getText(el: Element | null, selector: string): string {
     .trim()
 }
 
-export const xiaohongshuAdapter = {
+export const xiaohongshuAdapter = defineAdapter({
   name: 'xiaohongshu' as const,
+
+  chatItemSelector: '.sx-contact-item' as const,
+
+  onPageReady(): void {
+    // 页面加载后自动切换到“全部会话”，确保获取完整联系人列表；
+    // 再尝试一次，以防首次加载时 tab 还没渲染
+    setTimeout(() => this.switchToAllSessions(), 3000)
+    setTimeout(() => this.switchToAllSessions(), 6000)
+  },
 
   detect(): boolean {
     return window.location.hostname.includes('xiaohongshu') || window.location.hostname.includes('sxt')
@@ -365,4 +371,4 @@ export const xiaohongshuAdapter = {
     input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
     return true
   },
-}
+})

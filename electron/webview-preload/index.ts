@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { PlatformAdapter, ChatMessagePayload } from './adapter'
 import { wechatAdapter } from './wechat-adapter'
 import { xiaohongshuAdapter } from './xiaohongshu-adapter'
 
@@ -730,10 +731,10 @@ function stubBatteryAndSpeech() {
 /* ── 主入口 ───────────────────────────────────────── */
 async function init() {
   try {
-    // 从主进程获取本 partition 的指纹配置
-    const partition = (document.querySelector('webview') as any)?.partition || ''
+    // 先从主进程获取正确的 partition（guest page 无法通过 DOM 获取 webview 属性）
+    const partition = await ipcRenderer.invoke('chat:register')
 
-    // 启动聊天抓取（不依赖指纹配置；partition 在 guest page 中可能为空字符串）
+    // 启动聊天抓取
     startAutoReplyScraper(partition)
 
     const config: FpConfig | null = await ipcRenderer.invoke('fingerprint:get', partition)
@@ -773,27 +774,27 @@ async function init() {
 }
 
 /* ── Auto Reply: message scraper + injector ─────────── */
-interface ChatMessagePayload {
-  partition: string
-  sender: string
-  content: string
-  isFromUser: boolean
-  timestamp: number
-}
 
 function startAutoReplyScraper(partition: string) {
+  let monitoringEnabled = false
   try {
     // Detect platform and pick adapter
     const adapters = [wechatAdapter, xiaohongshuAdapter]
-    const adapter = adapters.find((a) => a.detect())
+    const adapter: PlatformAdapter | undefined = adapters.find((a) => a.detect())
     if (!adapter) {
       console.log('[ChatStats] no platform adapter matched for', window.location.hostname)
       return
     }
     console.log('[ChatStats] using adapter:', adapter.name)
 
-    // Register this webview with main process
-    ipcRenderer.invoke('chat:register', partition)
+    // Auto-enable monitoring on startup and send initial stats
+    monitoringEnabled = true
+    void adapter.extractChatListStats(partition).then((stats: any) => {
+      console.log('[ChatStats] initial scan', stats)
+      if (stats) {
+        ipcRenderer.send('chat:stats', stats)
+      }
+    })
 
     // ── localStorage persistence ────────────────────────
     function dumpLocalStorage(): void {
@@ -826,28 +827,15 @@ function startAutoReplyScraper(partition: string) {
     // Periodic auto-save
     setInterval(dumpLocalStorage, 30000)
 
-    // 小红书：页面加载后自动切换到"全部会话"，确保获取完整联系人列表
-    if (adapter.name === 'xiaohongshu') {
-      setTimeout(() => {
-        ;(adapter as any).switchToAllSessions?.()
-      }, 3000)
-      // 再尝试一次，以防首次加载时 tab 还没渲染
-      setTimeout(() => {
-        ;(adapter as any).switchToAllSessions?.()
-      }, 6000)
-    }
+    // 平台自定义初始化钩子（如小红书切换到"全部会话"）
+    adapter.onPageReady?.()
 
     // ── Contact click tracking ──────────────────────────
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement
       // Try to find the closest chat list item via adapter
-      let chatItem: Element | null = null
-      // First try adapter-specific selector if available
-      if (adapter.name === 'xiaohongshu') {
-        chatItem = target?.closest?.('.sx-contact-item')
-      } else {
-        chatItem = target?.closest?.('.chat_item')
-      }
+      // First try adapter-specific selector
+      let chatItem: Element | null = target?.closest?.(adapter.chatItemSelector) ?? null
       // Fallback: walk up DOM and check each element with adapter
       if (!chatItem) {
         let el: Element | null = target
@@ -932,8 +920,8 @@ function startAutoReplyScraper(partition: string) {
       }
 
       let newMsgs: ChatMessagePayload[] = []
-      if (typeof (adapter as any).extractMessagesFromNodes === 'function') {
-        newMsgs = (adapter as any).extractMessagesFromNodes(partition, addedNodes)
+      if (adapter.extractMessagesFromNodes) {
+        newMsgs = adapter.extractMessagesFromNodes(partition, addedNodes)
       }
       if (newMsgs.length === 0 && addedNodes.length > 0) {
         newMsgs = adapter.extractMessages(partition)
@@ -976,15 +964,13 @@ function startAutoReplyScraper(partition: string) {
     }, 5000)
 
     // ── Chat list stats scraper ────────────────────────
-    let monitoringEnabled = false
-
     ipcRenderer.on('chat:monitor', (_event, payload: { partition: string; enabled: boolean }) => {
       monitoringEnabled = payload.enabled
       console.log('[ChatStats] monitoring enabled =', monitoringEnabled)
       if (monitoringEnabled) {
         void adapter.extractChatListStats(partition).then((stats: any) => {
           console.log('[ChatStats] immediate scan', stats)
-          if (stats && stats.totalCount > 0) {
+          if (stats) {
             ipcRenderer.send('chat:stats', stats)
           }
         })
@@ -995,7 +981,7 @@ function startAutoReplyScraper(partition: string) {
       if (!monitoringEnabled) return
       const stats = await adapter.extractChatListStats(partition)
       console.log('[ChatStats]', stats)
-      if (stats && stats.totalCount > 0) {
+      if (stats) {
         ipcRenderer.send('chat:stats', stats)
       }
     }, 5000)

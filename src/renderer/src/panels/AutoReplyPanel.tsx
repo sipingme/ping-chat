@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Eraser, Loader2, MessageSquare, Plus, Send, SlidersHorizontal, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { Eraser, Loader2, MessageSquare, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import type { ChatSession, ChatMessage, AutoReplyConfig, ChatStats } from '../types'
 import { CustomSelect, Switch, ProxyField } from '../components/ui/BaseUI'
 import { MonitorPanel } from '../components/MonitorPanel'
@@ -60,12 +60,11 @@ export function AutoReplyPanel({
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
-  const workbenchTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const unsub = window.pingChat.onChatHistory((payload) => {
       console.log('[Renderer] chat:history received', payload.history.length, 'msgs, partition:', payload.partition, 'session partition:', session?.partition)
-      if (!session || payload.partition === session.partition || payload.partition === '') {
+      if (!session || payload.partition === session.partition || !payload.partition) {
         console.log('[Renderer] updating chatHistory with', payload.history.length, 'messages')
         setChatHistory(payload.history.map((m) => ({ ...m, partition: payload.partition })))
       } else {
@@ -174,13 +173,6 @@ export function AutoReplyPanel({
     }
     hadPendingRef.current = pendingConversation.length > 0
   }, [pendingConversation.length])
-
-  useEffect(() => {
-    const el = workbenchTextareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = el.scrollHeight + 'px'
-  }, [workbenchPrompt])
 
   // Single-mode auto-reply: when new pending messages arrive, auto-generate and send
   const singleAutoReplyKeyRef = useRef('')
@@ -340,7 +332,7 @@ export function AutoReplyPanel({
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
         <div className="translation-title"><span>自动回复</span>{enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginLeft: 6 }} />}</div>
-        <button className="translation-menu" onClick={() => onClose?.()}><SlidersHorizontal size={14} /></button>
+        <button className="translation-menu" onClick={() => onClose?.()}><X size={14} /></button>
       </div>
 
       <div className="proxy-tabs" ref={tabsRef}>
@@ -619,22 +611,6 @@ export function AutoReplyPanel({
               </div>
             )}
 
-            {/* 自定义回复内容 */}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, color: '#5c6670', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <SlidersHorizontal size={11} />
-                自定义回复内容
-              </div>
-              <textarea
-                ref={workbenchTextareaRef}
-                className="proxy-textarea"
-                placeholder="AI 生成的回复内容或手动输入的回复内容..."
-                value={workbenchPrompt}
-                onChange={(e) => setWorkbenchPrompt(e.target.value)}
-                style={{ fontSize: 12, minHeight: 56, borderColor: '#33373d', background: '#151719', resize: 'none', overflow: 'hidden' }}
-              />
-            </div>
-
             {/* 生成回复按钮 */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button
@@ -730,7 +706,7 @@ export function AutoReplyPanel({
               />
               <button
                 className="secondary-action"
-                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                style={{ height: 32, padding: '0 10px', fontSize: 11 }}
                 onClick={() => {
                   const input = document.getElementById('blacklist-input') as HTMLInputElement
                   const text = input?.value.trim()

@@ -41,6 +41,7 @@ const api = {
     ipcRenderer.on(event, handler)
     return () => ipcRenderer.removeListener(event, handler)
   },
+  setWebviewPartition: (wcId: number, partition: string) => ipcRenderer.send('webview:set-partition', { wcId, partition }),
   sendReply: (partition: string, content: string, autoSend?: boolean) => ipcRenderer.invoke('chat:reply', partition, content, autoSend),
   selectChat: (partition: string, contactName: string) => ipcRenderer.invoke('chat:select', partition, contactName),
   setMonitorEnabled: (partition: string, enabled: boolean) => ipcRenderer.invoke('chat:monitor', partition, enabled),

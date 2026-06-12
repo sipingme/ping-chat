@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageCircle } from 'lucide-react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
+import { PLATFORMS } from '../../shared/platforms'
 import type {
   ChatMessage,
   ChatSession,
@@ -15,6 +16,7 @@ import { useSensitiveWords } from './hooks/useSensitiveWords'
 import { handleCommand } from './utils/commandHandler'
 import { pluginManager } from './utils/pluginManager'
 import { translateText } from './utils/translate'
+import { useAppStore } from './store/appStore'
 import { TitleBar } from './components/TitleBar'
 import { PlatformSidebar } from './components/PlatformSidebar'
 import { ConversationSidebar } from './components/ConversationSidebar'
@@ -30,19 +32,34 @@ function XhsIcon(): JSX.Element {
   return <span className="text-icon xhs">红</span>
 }
 
-const platforms: Platform[] = [
-  { id: 'xiaohongshu', name: '小红书', shortName: '红', icon: <XhsIcon />, accent: '#ff2442' },
-  { id: 'wechat', name: '微信', shortName: 'W', icon: <MessageCircle size={17} />, accent: '#07c160' },
-]
+const platformIcons: Record<string, JSX.Element> = {
+  xiaohongshu: <span className="text-icon xhs">红</span>,
+  wechat: <MessageCircle size={17} />,
+}
+
+const platforms: Platform[] = PLATFORMS.map((p) => ({
+  id: p.id,
+  name: p.name,
+  shortName: p.shortName,
+  icon: platformIcons[p.id] ?? <span className="text-icon">{p.shortName}</span>,
+  accent: p.accent,
+}))
 
 initLocale()
 
 export function App(): JSX.Element {
-  const [activePlatformId, setActivePlatformId] = useState('xiaohongshu')
+  const activePlatformId = useAppStore((s) => s.activePlatformId)
+  const setActivePlatformId = useAppStore((s) => s.setActivePlatformId)
+  const sessions = useAppStore((s) => s.sessions)
+  const setSessions = useAppStore((s) => s.setSessions)
+  const activeSessionId = useAppStore((s) => s.activeSessionId)
+  const setActiveSessionId = useAppStore((s) => s.setActiveSessionId)
+  const loaded = useAppStore((s) => s.loaded)
+  const setLoaded = useAppStore((s) => s.setLoaded)
+  const setChatStats = useAppStore((s) => s.setChatStats)
+  const getChatStats = useAppStore((s) => s.getChatStats)
+
   const [activeRightTool, setActiveRightTool] = useState('')
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [activeSessionId, setActiveSessionId] = useState('')
-  const [loaded, setLoaded] = useState(false)
   const [webviewReloadKey, setWebviewReloadKey] = useState(0)
   const [theme, setTheme] = useState<'dark' | 'light' | 'system'>(() => {
     const saved = localStorage.getItem('ping-chat-theme') as 'dark' | 'light' | 'system' | null
@@ -82,23 +99,14 @@ export function App(): JSX.Element {
   /* ── Auto Reply State ── */
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
   const [autoReplyMode, setAutoReplyMode] = useState<'global' | 'single'>('global')
-  const [monitoringEnabled, setMonitoringEnabled] = useState(false)
+  const [monitoringEnabled, setMonitoringEnabled] = useState(true)
   const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
   const [autoReplyProcessing, setAutoReplyProcessing] = useState(false)
-  const [chatStats, setChatStats] = useState<{
-    partition: string
-    totalCount: number
-    groupCount: number
-    userCount: number
-    totalUnread: number
-    contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>
-    unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>
-  } | null>(null)
   const [replyFeedbackMap, setReplyFeedbackMap] = useState<Record<string, 'up' | 'down'>>({})
   const [recentReplyLogs, setRecentReplyLogs] = useState<Array<{ id: string; type: string; content: string; contact: string }>>([])
   const [autoReplyTarget, setAutoReplyTarget] = useState('')
   const [autoReplyConfig, setAutoReplyConfig] = useState({
-    apiKey: '',
+    apiKey: 'sk-cp-eEhluB-WZIP6LV2qAJO_TYawZIIiwtcCd7CnA73soACxZygFWJx2JycyO7l_100a5FnOh6O0-FPojZzbibf02yw6SAF9jAQg6PGtyew3IDvMKJpJ14QZKwY',
     endpoint: 'https://api.minimaxi.com/v1/chat/completions',
     model: 'MiniMax-M2.7',
     systemPrompt: '你是一个热情友好的客服助手，善于用活泼亲切的语气与用户沟通。',
@@ -136,6 +144,16 @@ export function App(): JSX.Element {
     autoSend: true,
   })
 
+  const activePlatform = useMemo(
+    () => platforms.find((platform) => platform.id === activePlatformId) ?? platforms[0],
+    [activePlatformId]
+  )
+
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId),
+    [activeSessionId, sessions]
+  )
+
   useEffect(() => {
     const unsub = window.pingChat.onChatMessage((payload) => {
       setAutoReplyMessages((prev) => [...prev, payload])
@@ -146,10 +164,13 @@ export function App(): JSX.Element {
   useEffect(() => {
     const unsub = window.pingChat.onChatStats((payload) => {
       console.log('[Renderer ChatStats]', payload)
-      setChatStats(payload)
+      const partition = payload.partition || activeSession?.partition || ''
+      if (partition) {
+        setChatStats(partition, { ...payload, partition })
+      }
     })
     return unsub
-  }, [])
+  }, [activeSession?.partition])
 
   const [recalledMessages, setRecalledMessages] = useState<Array<{ partition: string; sender: string; content: string; originalContent: string; timestamp: number }>>([])
 
@@ -379,7 +400,8 @@ export function App(): JSX.Element {
     const key = `${message.partition}:${message.sender}:${message.content}`
     if (processedReplyKeys.current.has(key)) return
 
-    const contact = chatStats?.contacts?.find((c) => c.name === message.sender)
+    const stats = getChatStats(message.partition)
+    const contact = stats?.contacts?.find((c: { name: string }) => c.name === message.sender)
     if (contact?.isGroup) {
       const config = autoReplyConfigRef.current
       if (config?.groupWhitelist?.length) {
@@ -408,7 +430,7 @@ export function App(): JSX.Element {
     if (!autoReplyEnabled) return
     const lastMsg = autoReplyMessages[autoReplyMessages.length - 1]
     enqueueAutoReplyMessage(lastMsg)
-  }, [autoReplyMessages, autoReplyEnabled, chatStats])
+  }, [autoReplyMessages, autoReplyEnabled])
 
   useEffect(() => {
     if (autoReplyEnabled) return
@@ -461,21 +483,17 @@ export function App(): JSX.Element {
     void window.pingChat.setConfig('autoReplyEnabled', autoReplyEnabled)
   }, [autoReplyEnabled, loaded])
 
-  const activePlatform = useMemo(
-    () => platforms.find((platform) => platform.id === activePlatformId) ?? platforms[0],
-    [activePlatformId]
-  )
-
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId),
-    [activeSessionId, sessions]
-  )
-
   useEffect(() => {
     if (!activeSession) {
       setActiveRightTool('')
     }
   }, [activeSession])
+
+  useEffect(() => {
+    if (activeSession && monitoringEnabled) {
+      void window.pingChat.setMonitorEnabled(activeSession.partition, true)
+    }
+  }, [activeSession?.id, monitoringEnabled])
 
   const visibleSessions = useMemo(
     () => sessions.filter((session) => session.platformId === activePlatformId),
@@ -488,7 +506,7 @@ export function App(): JSX.Element {
     const nextSession: ChatSession = {
       id,
       platformId: activePlatformId,
-      name: activePlatformId === 'wechat' ? `微信 ${platformSessionCount + 1}` : `${activePlatform.name} ${platformSessionCount + 1}`,
+      name: `${activePlatform.name} ${platformSessionCount + 1}`,
       status: 'login',
       partition: `persist:${activePlatformId}-${id}`,
       fingerprint: generateRandomFingerprint(),
@@ -562,7 +580,7 @@ export function App(): JSX.Element {
             onCloseSession={closeSession}
             onRefreshSession={refreshSession}
           />
-          <MainPanel session={activeSession} platform={activePlatform} reloadTrigger={webviewReloadKey} />
+          <MainPanel sessions={sessions} activeSession={activeSession} platform={activePlatform} reloadTrigger={webviewReloadKey} />
           {activeRightTool === 'environment' && (
             <ErrorBoundary>
               <Suspense fallback={<div style={{ width: 320, padding: 24, color: '#8c96a1' }}>加载中...</div>}>
@@ -599,7 +617,7 @@ export function App(): JSX.Element {
                     const modified = pluginManager.onReply(content)
                     void window.pingChat.sendReply(partition, modified ?? content, autoSend)
                   }}
-                  chatStats={chatStats}
+                  chatStats={getChatStats(activeSession?.partition ?? '') ?? null}
                   autoReplyTarget={autoReplyTarget}
                   setAutoReplyTarget={setAutoReplyTarget}
                   autoReplyMode={autoReplyMode}

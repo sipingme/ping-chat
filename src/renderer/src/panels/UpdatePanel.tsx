@@ -102,7 +102,7 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
         <div className="translation-title">
-          <span>关于 / 更新</span>
+          <span>关于我们 / 更新</span>
         </div>
         <button className="translation-menu" onClick={() => onClose?.()}>
           <X size={14} />
@@ -115,13 +115,13 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           <ShieldCheck size={28} color="#19d973" />
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: '#f3f5f7' }}>PingChat</div>
-            <div style={{ fontSize: 13, color: '#8c96a1' }}>当前版本 {currentVersion || '—'}</div>
+            <div style={{ fontSize: 13, color: '#8c96a1', marginTop: 6 }}>当前版本 {currentVersion || '—'}</div>
           </div>
         </div>
 
         <div style={{ fontSize: 14, color: '#f3f5f7', lineHeight: 1.8, marginBottom: 16 }}>
           <p style={{ margin: 0 }}>PingChat 是一款面向商家与客服团队的专业级多平台社交聚合工具，深度整合微信、小红书等主流社交媒体渠道，提供一站式会话管理与智能运营解决方案。内置 AI 智能客服助手，支持基于大模型的自动回复、敏感词过滤与个性化话术定制。</p>
-          <p style={{ margin: '8px 0 0 0' }}>同时配备浏览器指纹伪装与代理环境配置能力，实现多账号安全隔离管理。强大的客服工作台可实时监控全渠道消息动态，智能分配客户对话，自动追踪高意向用户，全方位提升客服响应效率、降低运营成本并驱动业务转化增长。</p>
+          <p style={{ margin: '12px 0 0 0' }}>同时配备浏览器指纹伪装与代理环境配置能力，实现多账号安全隔离管理。强大的客服工作台可实时监控全渠道消息动态，智能分配客户对话，自动追踪高意向用户，全方位提升客服响应效率、降低运营成本并驱动业务转化增长。</p>
         </div>
 
         {/* Features */}
