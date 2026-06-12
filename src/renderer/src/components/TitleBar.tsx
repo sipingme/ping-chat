@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 export function TitleBar({ onlineCount, offlineCount, onRefresh }: { onlineCount: number; offlineCount: number; onRefresh?: () => void }): JSX.Element {
   const [spinning, setSpinning] = useState(false)
+  const [version, setVersion] = useState<string>('')
+  useEffect(() => {
+    void window.pingChat.getAppVersion().then((v) => setVersion(v))
+  }, [])
   const handleRefresh = (): void => {
     setSpinning(true)
     onRefresh?.()
@@ -15,7 +19,7 @@ export function TitleBar({ onlineCount, offlineCount, onRefresh }: { onlineCount
         <button className="traffic maximize" onClick={() => window.pingChat?.maximize()} />
       </div>
       <div className="brand-block">
-        <span className="brand-name">PingChat 0.2.6</span>
+        <span className="brand-name">PingChat {version || '—'}</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
         <span>离线: <b className="red">0</b></span>
         <button className={`tiny-icon${spinning ? ' spinning' : ''}`} onClick={handleRefresh} onAnimationEnd={() => setSpinning(false)}><RefreshCw size={12} /></button>

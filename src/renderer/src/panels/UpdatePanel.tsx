@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Bot, Download, MessageCircle, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Wifi, X } from 'lucide-react'
 
 type UpdateState =
@@ -13,37 +13,62 @@ type UpdateState =
 export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element {
   const [currentVersion, setCurrentVersion] = useState<string>('')
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+  const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearCheckTimeout = () => {
+    if (checkTimeoutRef.current) {
+      clearTimeout(checkTimeoutRef.current)
+      checkTimeoutRef.current = null
+    }
+  }
+
+  const startCheckTimeout = () => {
+    clearCheckTimeout()
+    checkTimeoutRef.current = setTimeout(() => {
+      setUpdateState({ status: 'error', message: '检测超时，请检查网络连接后重试' })
+    }, 10000)
+  }
 
   useEffect(() => {
     void window.pingChat.getAppVersion().then((v) => setCurrentVersion(v))
 
     const unsubs = [
-      window.pingChat.onUpdateEvent('update:checking', () => setUpdateState({ status: 'checking' })),
-      window.pingChat.onUpdateEvent('update:available', (info) =>
+      window.pingChat.onUpdateEvent('update:checking', () => {
+        clearCheckTimeout()
+        setUpdateState({ status: 'checking' })
+        startCheckTimeout()
+      }),
+      window.pingChat.onUpdateEvent('update:available', (info) => {
+        clearCheckTimeout()
         setUpdateState({ status: 'available', version: info.version, releaseDate: info.releaseDate, releaseNotes: info.releaseNotes })
-      ),
-      window.pingChat.onUpdateEvent('update:not-available', () => setUpdateState({ status: 'not-available' })),
-      window.pingChat.onUpdateEvent('update:progress', (progress) =>
+      }),
+      window.pingChat.onUpdateEvent('update:not-available', () => {
+        clearCheckTimeout()
+        setUpdateState({ status: 'not-available' })
+      }),
+      window.pingChat.onUpdateEvent('update:progress', (progress) => {
+        clearCheckTimeout()
         setUpdateState({ status: 'downloading', percent: Math.round(progress.percent || 0) })
-      ),
-      window.pingChat.onUpdateEvent('update:downloaded', (info) =>
+      }),
+      window.pingChat.onUpdateEvent('update:downloaded', (info) => {
+        clearCheckTimeout()
         setUpdateState({ status: 'downloaded', version: info.version })
-      ),
-      window.pingChat.onUpdateEvent('update:error', (err) =>
+      }),
+      window.pingChat.onUpdateEvent('update:error', (err) => {
+        clearCheckTimeout()
         setUpdateState({ status: 'error', message: err.message || '检测更新失败' })
-      ),
+      }),
     ]
 
-    // Auto-check on mount (startup check may have already fired)
-    void window.pingChat.checkForUpdate()
-
     return () => {
+      clearCheckTimeout()
       unsubs.forEach((u) => u())
     }
   }, [])
 
   const handleCheck = () => {
     setUpdateState({ status: 'checking' })
+    startCheckTimeout()
     void window.pingChat.checkForUpdate()
   }
 
@@ -94,8 +119,9 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
           </div>
         </div>
 
-        <div style={{ fontSize: 13, color: '#f3f5f7', lineHeight: 1.6, marginBottom: 16 }}>
-          PingChat 是一款面向商家与客服团队的多平台社交聚合工具，支持微信、小红书等主流平台的一站式会话管理、AI 智能自动回复、浏览器指纹伪装与代理环境配置。内置强大的客服工作台，可实时监控多账号消息动态，智能分配客户对话，大幅提升客服响应效率与运营转化。
+        <div style={{ fontSize: 14, color: '#f3f5f7', lineHeight: 1.8, marginBottom: 16 }}>
+          <p style={{ margin: 0 }}>PingChat 是一款面向商家与客服团队的专业级多平台社交聚合工具，深度整合微信、小红书等主流社交媒体渠道，提供一站式会话管理与智能运营解决方案。内置 AI 智能客服助手，支持基于大模型的自动回复、敏感词过滤与个性化话术定制。</p>
+          <p style={{ margin: '8px 0 0 0' }}>同时配备浏览器指纹伪装与代理环境配置能力，实现多账号安全隔离管理。强大的客服工作台可实时监控全渠道消息动态，智能分配客户对话，自动追踪高意向用户，全方位提升客服响应效率、降低运营成本并驱动业务转化增长。</p>
         </div>
 
         {/* Features */}
@@ -262,14 +288,9 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
             </button>
           )}
 
-          {updateState.status === 'error' && (
-            <div style={{ fontSize: 13, color: '#ef4444', marginBottom: 10, lineHeight: 1.4 }}>
-              {updateState.message}
-            </div>
-          )}
-
           {/* Check button — always shown except when downloading/downloaded/available */}
           {(updateState.status === 'idle' ||
+            updateState.status === 'checking' ||
             updateState.status === 'not-available' ||
             updateState.status === 'error') && (
             <button
@@ -277,13 +298,13 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
               onClick={handleCheck}
               style={{
                 width: '100%',
-                padding: '10px 14px',
+                padding: '8px 12px',
                 borderRadius: 6,
-                border: isChecking ? '1px solid #1f2528' : '1px solid #19d973',
-                background: isChecking ? '#14181b' : 'transparent',
-                color: isChecking ? '#5a6269' : '#19d973',
-                fontSize: 14,
-                fontWeight: 700,
+                border: '1px solid #19d973',
+                background: isChecking ? '#0f1a12' : 'transparent',
+                color: isChecking ? '#f3f5f7' : '#19d973',
+                fontSize: 12,
+                fontWeight: 600,
                 cursor: isChecking ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -312,6 +333,12 @@ export function UpdatePanel({ onClose }: { onClose?: () => void }): JSX.Element 
               />
               {isChecking ? '正在检测…' : '检测更新'}
             </button>
+          )}
+
+          {updateState.status === 'error' && (
+            <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8, lineHeight: 1.4, textAlign: 'center' }}>
+              {updateState.message}
+            </div>
           )}
         </div>
       </div>

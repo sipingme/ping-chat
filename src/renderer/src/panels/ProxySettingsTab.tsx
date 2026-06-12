@@ -282,7 +282,7 @@ export function ProxySettingsTab({
       <ProxyField label="WebDriver 隐藏">
         <Switch enabled={fingerprint.hideWebdriver} onChange={(v) => handleFp({ hideWebdriver: v })} />
       </ProxyField>
-      <div className="proxy-note">彻底隐藏 webdriver 检测标记，深度模拟真实用户行为特征</div>
+      <div className="proxy-note">隐藏 webdriver 检测标记，模拟真实用户行为</div>
       <ProxyField label="Chrome 对象">
         <Switch enabled={fingerprint.enableChromeObj} onChange={(v) => handleFp({ enableChromeObj: v })} />
       </ProxyField>

@@ -1,5 +1,5 @@
 import { autoUpdater } from 'electron-updater'
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { log } from 'node:console'
 
 autoUpdater.logger = {
@@ -44,6 +44,14 @@ export function initAutoUpdater(): void {
 
   // IPC handlers
   ipcMain.handle('update:check', () => {
+    if (!app.isPackaged) {
+      // Dev mode: simulate check flow so UI can be tested
+      notifyRenderer('update:checking', null)
+      setTimeout(() => {
+        notifyRenderer('update:not-available', null)
+      }, 1500)
+      return { devMode: true }
+    }
     return autoUpdater.checkForUpdates().catch((err) => ({ error: err.message }))
   })
 
@@ -58,6 +66,13 @@ export function initAutoUpdater(): void {
 
   // Check on startup (after 30s to avoid startup overhead)
   setTimeout(() => {
+    if (!app.isPackaged) {
+      notifyRenderer('update:checking', null)
+      setTimeout(() => {
+        notifyRenderer('update:not-available', null)
+      }, 1500)
+      return
+    }
     autoUpdater.checkForUpdates().catch(() => {
       // silently ignore network errors on startup
     })
