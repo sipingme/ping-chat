@@ -185,6 +185,7 @@ export const wechatAdapter = defineAdapter({
 
   async extractChatListStats(partition: string) {
     const items = document.querySelectorAll('.chat_item')
+    console.log('[ChatStats] found', items.length, 'chat items')
     let groupCount = 0
     let totalUnread = 0
     const contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
@@ -234,16 +235,68 @@ export const wechatAdapter = defineAdapter({
         console.error('[ChatStats] angular scope error:', name, e)
       }
 
-      // DOM fallback: detect unread badges / red dots
-      if (unread === 0) {
-        const badgeNew = el.querySelector('.web_wechat_reddot_bignew, [class*="reddot_big"]')
-        const badgeDot = el.querySelector('.web_wechat_reddot, [class*="reddot"]')
-        if (badgeNew) {
-          const text = badgeNew.textContent?.trim() || ''
-          unread = text ? parseInt(text, 10) || 1 : 1
-        } else if (badgeDot) {
-          unread = 1
+      // Always prefer DOM badge over Angular scope (more reliable)
+      // Badge is typically inside .avatar div with classes like web_wechat_reddot_middle
+      let domUnread = 0
+
+      // First search inside .avatar specifically (WeChat Web structure)
+      const avatarContainer = el.querySelector('.avatar')
+      if (avatarContainer) {
+        const avatarBadgeSelectors = [
+          '.web_wechat_reddot_bignew',
+          '.web_wechat_reddot_middle',
+          '.web_wechat_reddot',
+          '[class*="reddot"]',
+          '[class*="badge"]',
+          '.dot'
+        ]
+        for (const selector of avatarBadgeSelectors) {
+          const badges = avatarContainer.querySelectorAll(selector)
+          for (const badge of badges) {
+            const text = badge.textContent?.trim() || ''
+            const num = text ? parseInt(text, 10) : 0
+            if (num > domUnread) domUnread = num
+            if (num === 0 && text === '' && (badge as HTMLElement).offsetWidth > 0) {
+              if (domUnread === 0) domUnread = 1
+            }
+          }
         }
+      }
+
+      // Fallback: search entire chat item
+      if (domUnread === 0) {
+        const generalSelectors = [
+          '.web_wechat_reddot_bignew',
+          '.web_wechat_reddot_middle',
+          '.web_wechat_reddot',
+          '[class*="reddot"]',
+          '[class*="badge"]',
+          '.dot',
+          '[class*="unread"]'
+        ]
+        for (const selector of generalSelectors) {
+          const badges = el.querySelectorAll(selector)
+          for (const badge of badges) {
+            const text = badge.textContent?.trim() || ''
+            const num = text ? parseInt(text, 10) : 0
+            if (num > domUnread) domUnread = num
+            if (num === 0 && text === '' && (badge as HTMLElement).offsetWidth > 0) {
+              if (domUnread === 0) domUnread = 1
+            }
+          }
+        }
+      }
+
+      if (domUnread > 0) {
+        unread = domUnread
+        angularFound = false
+      } else if (unread === 0) {
+        // Fallback: if Angular said 0 and DOM shows nothing, keep 0
+        // If Angular said >0 and DOM shows nothing, keep Angular value
+      }
+
+      if (domUnread > 0 || unread > 0) {
+        console.log('[ChatStats] unread debug:', name, 'angular=', angularFound ? 'N/A' : unread, 'dom=', domUnread, 'final=', unread)
       }
 
       if (unread > 0) {
@@ -273,7 +326,9 @@ export const wechatAdapter = defineAdapter({
       contacts.push({ name, isGroup, unread, avatar })
 
       if (unread > 0) {
-        totalUnread += unread
+        if (!isGroup) {
+          totalUnread += unread
+        }
         unreadContacts.push({ name, isGroup, unread, avatar })
       }
     }

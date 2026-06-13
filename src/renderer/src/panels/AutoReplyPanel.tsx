@@ -3,8 +3,8 @@ import { Eraser, Loader2, MessageSquare, Plus, Send, Sparkles, Trash2, X, Zap } 
 import type { ChatSession, ChatMessage, AutoReplyConfig, ChatStats } from '../types'
 import { CustomSelect, Switch, ProxyField } from '../components/ui/BaseUI'
 import { MonitorPanel } from '../components/MonitorPanel'
+import { useAppStore } from '../store/appStore'
 import { buildSystemPrompt, interpolateTemplateVars } from '../config/defaults'
-import { ModelSwitcher } from './ModelSwitcher'
 
 export function AutoReplyPanel({
   session,
@@ -19,7 +19,7 @@ export function AutoReplyPanel({
   config,
   onUpdateConfig,
   onSendReply,
-  chatStats,
+  chatStats: chatStatsProp,
   autoReplyTarget,
   setAutoReplyTarget,
   autoReplyMode,
@@ -27,6 +27,7 @@ export function AutoReplyPanel({
   recentReplyLogs,
   replyFeedbackMap,
   onReplyFeedback,
+  onClearMemory,
 }: {
   session?: ChatSession
   onClose?: () => void
@@ -48,6 +49,7 @@ export function AutoReplyPanel({
   recentReplyLogs?: Array<{ id: string; type: string; content: string; contact: string }>
   replyFeedbackMap?: Record<string, 'up' | 'down'>
   onReplyFeedback?: (id: string, feedback: 'up' | 'down') => void
+  onClearMemory?: () => void
 }): JSX.Element {
   const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model'>('monitor')
   const [generating, setGenerating] = useState(false)
@@ -60,6 +62,11 @@ export function AutoReplyPanel({
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
+
+  const storeChatStats = useAppStore((state) => session ? state.chatStatsMap[session.partition] : undefined)
+  const chatStats = storeChatStats ?? chatStatsProp
+  const globalGenerating = useAppStore((s) => s.autoReplyGlobalGenerating)
+  const globalError = useAppStore((s) => s.autoReplyGlobalError)
 
   useEffect(() => {
     const unsub = window.pingChat.onChatHistory((payload) => {
@@ -192,16 +199,25 @@ export function AutoReplyPanel({
     isAutoSendingRef.current = true
     void (async () => {
       try {
+        console.log('[AutoReply] single mode triggered for', autoReplyTarget, 'delay:', config.delaySeconds, 'autoSend:', config.autoSend)
         const reply = await handleWorkbenchGenerate(autoReplyTarget, pendingConversation)
-        if (!reply || !session) return
+        if (!reply || !session) {
+          console.log('[AutoReply] no reply or no session, aborting')
+          return
+        }
         if (config.autoSend) {
           if (config.delaySeconds > 0) {
+            console.log('[AutoReply] delaying', config.delaySeconds, 'seconds before sending...')
             await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
+            console.log('[AutoReply] delay complete, sending reply')
+          } else {
+            console.log('[AutoReply] no delay, sending immediately')
           }
           onSendReply(session.partition, reply, config.autoSend)
           setWorkbenchPrompt('')
+        } else {
+          console.log('[AutoReply] autoSend is false, not sending')
         }
-        // When autoSend is false, reply is already set in workbenchPrompt by handleWorkbenchGenerate
       } finally {
         isAutoSendingRef.current = false
       }
@@ -218,8 +234,10 @@ export function AutoReplyPanel({
 
   const handleScrollTo = (tab: 'monitor' | 'overview' | 'reply' | 'model'): void => {
     setActiveTab(tab)
-    // When switching to auto-reply in single mode, auto-set target from quick-reply target if available
-    if (tab === 'reply' && autoReplyMode === 'single' && !autoReplyTarget && replyTarget) {
+    // When switching to auto-reply tab and a user is already selected in quick-reply,
+    // default to single-user mode and set the target — but respect explicit global mode
+    if (tab === 'reply' && replyTarget && autoReplyMode !== 'global') {
+      setAutoReplyMode('single')
       setAutoReplyTarget(replyTarget)
     }
   }
@@ -331,7 +349,7 @@ export function AutoReplyPanel({
   return (
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
-        <div className="translation-title"><span>自动回复</span>{enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginLeft: 6 }} />}</div>
+        <div className="translation-title">{enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginRight: 6 }} />}<span>自动回复</span><span style={{ fontSize: 11, color: '#19d973', marginLeft: 8, padding: '2px 8px', background: 'rgba(25, 217, 115, 0.12)', borderRadius: 4, border: '1px solid rgba(25, 217, 115, 0.35)', fontWeight: 600 }}>{autoReplyMode === 'global' ? '所有用户' : autoReplyTarget || '指定用户'}</span></div>
         <button className="translation-menu" onClick={() => onClose?.()}><X size={14} /></button>
       </div>
 
@@ -356,9 +374,7 @@ export function AutoReplyPanel({
             setAutoReplyTarget={setAutoReplyTarget}
             messages={messages}
             processedCount={processedCount}
-            recentReplyLogs={recentReplyLogs}
-            replyFeedbackMap={replyFeedbackMap}
-            onReplyFeedback={onReplyFeedback}
+            onClearMemory={onClearMemory}
           />
         )}
 
@@ -372,12 +388,12 @@ export function AutoReplyPanel({
                 if (avatar) {
                   return (
                     <>
-                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
-                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
+                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: 2, objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
+                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: 2, background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
                     </>
                   )
                 }
-                return <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
+                return <div style={{ width: 20, height: 20, borderRadius: 2, background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{replyTarget.charAt(0)}</div>
               })()}
               <span style={{ fontSize: 12, color: '#04c768', fontWeight: 600 }}>正在回复: {replyTarget}</span>
             </div>
@@ -545,12 +561,12 @@ export function AutoReplyPanel({
                 if (avatar) {
                   return (
                     <>
-                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
-                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
+                      <img src={avatar} alt="" style={{ width: 20, height: 20, borderRadius: 2, objectFit: 'cover', flexShrink: 0 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; const el = (e.target as HTMLImageElement).parentElement?.querySelector('.avatar-fallback') as HTMLElement | null; if (el) el.style.display = 'flex' }} />
+                      <div className="avatar-fallback" style={{ width: 20, height: 20, borderRadius: 2, background: '#3a4147', flexShrink: 0, display: 'none', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
                     </>
                   )
                 }
-                return <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
+                return <div style={{ width: 20, height: 20, borderRadius: 2, background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{autoReplyTarget.charAt(0)}</div>
               })()}
               <span style={{ fontSize: 12, color: '#04c768', fontWeight: 600 }}>正在自动回复: {autoReplyTarget}</span>
             </div>
@@ -579,7 +595,7 @@ export function AutoReplyPanel({
                     return (
                       <div key={i} style={{ display: 'flex', justifyContent: isSelf ? 'flex-end' : 'flex-start', marginBottom: 14, gap: 10, alignItems: 'center' }}>
                         {!isSelf && (
-                          <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: '#3a4147' }}>
+                          <div style={{ width: 20, height: 20, borderRadius: 2, flexShrink: 0, overflow: 'hidden', background: '#3a4147' }}>
                             {avatarSrc ? (
                               <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             ) : (
@@ -593,7 +609,7 @@ export function AutoReplyPanel({
                           </span>
                         </div>
                         {isSelf && (
-                          <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: '#07c160', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#ffffff', fontWeight: 700 }}>
+                          <div style={{ width: 20, height: 20, borderRadius: 2, flexShrink: 0, overflow: 'hidden', background: '#07c160', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#ffffff', fontWeight: 700 }}>
                             我
                           </div>
                         )}
@@ -619,8 +635,8 @@ export function AutoReplyPanel({
                 onClick={() => handleWorkbenchGenerate(workbenchTarget)}
                 disabled={workbenchGenerating}
               >
-                {workbenchGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
-                {workbenchGenerating ? '生成中…' : '生成回复'}
+                {workbenchGenerating || globalGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
+                {workbenchGenerating ? '生成中…' : globalGenerating ? '处理中…' : '生成回复'}
               </button>
               <button
                 className="secondary-action"
@@ -643,6 +659,11 @@ export function AutoReplyPanel({
                 {workbenchError}
               </div>
             )}
+            {globalError && (
+              <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4, background: '#2a1515', border: '1px solid #5c2a2a', fontSize: 12, color: '#e07a7a', lineHeight: 1.5 }}>
+                {globalError}
+              </div>
+            )}
             </div>
           </>
         )}
@@ -660,8 +681,8 @@ export function AutoReplyPanel({
             placeholder="选择范围"
             value={autoReplyMode}
             options={[
-              { value: 'global', label: '全局（所有用户）' },
-              { value: 'single', label: '单用户（指定用户）' },
+              { value: 'global', label: '所有用户' },
+              { value: 'single', label: '指定用户' },
             ]}
             onChange={(val) => {
               setAutoReplyMode(val as 'global' | 'single')
@@ -763,7 +784,7 @@ export function AutoReplyPanel({
               />
               <button
                 className="secondary-action"
-                style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                style={{ height: 32, padding: '0 10px', fontSize: 11 }}
                 onClick={() => {
                   const input = document.getElementById('keyword-input') as HTMLInputElement
                   const text = input?.value.trim()
@@ -1017,10 +1038,6 @@ export function AutoReplyPanel({
           </div>
         </ProxyField>
         <div className="proxy-note">越高话题越新（-2.0 ~ 2.0）</div>
-      </>)}
-      {activeTab === 'model' && (<>
-        <ModelSwitcher currentModel={config.model} onChange={(model: string) => onUpdateConfig({ model })} />
-        <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
       </>)}
       </div>
     </aside>

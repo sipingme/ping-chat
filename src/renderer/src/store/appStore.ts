@@ -19,6 +19,8 @@ interface AppState {
   monitoringEnabled: boolean
   chatStatsMap: Record<string, ChatStats>
   chatMessagesMap: Record<string, ChatMessage[]>
+  autoReplyGlobalGenerating: boolean
+  autoReplyGlobalError: string | null
 
   setSessions: (updater: ChatSession[] | ((prev: ChatSession[]) => ChatSession[])) => void
   setActiveSessionId: (id: string) => void
@@ -29,6 +31,9 @@ interface AppState {
   getChatStats: (partition: string) => ChatStats | undefined
   appendChatMessage: (partition: string, message: ChatMessage) => void
   getChatMessages: (partition: string) => ChatMessage[]
+  clearChatMessages: () => void
+  setAutoReplyGlobalGenerating: (v: boolean) => void
+  setAutoReplyGlobalError: (v: string | null) => void
   createSession: (session: ChatSession) => void
   closeSession: (id: string) => void
   updateSession: (id: string, updater: (s: ChatSession) => ChatSession) => void
@@ -42,6 +47,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   monitoringEnabled: false,
   chatStatsMap: {},
   chatMessagesMap: {},
+  autoReplyGlobalGenerating: false,
+  autoReplyGlobalError: null,
 
   setSessions: (updater) =>
     set((state) => ({
@@ -69,6 +76,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
 
   getChatMessages: (partition) => get().chatMessagesMap[partition] ?? [],
+
+  clearChatMessages: () => set({ chatMessagesMap: {} }),
+
+  setAutoReplyGlobalGenerating: (v) => set({ autoReplyGlobalGenerating: v }),
+  setAutoReplyGlobalError: (v) => set({ autoReplyGlobalError: v }),
 
   createSession: (session) =>
     set((state) => ({

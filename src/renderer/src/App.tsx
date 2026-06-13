@@ -52,12 +52,18 @@ export function App(): JSX.Element {
   const setActivePlatformId = useAppStore((s) => s.setActivePlatformId)
   const sessions = useAppStore((s) => s.sessions)
   const setSessions = useAppStore((s) => s.setSessions)
+  const updateSession = useAppStore((s) => s.updateSession)
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const setActiveSessionId = useAppStore((s) => s.setActiveSessionId)
   const loaded = useAppStore((s) => s.loaded)
   const setLoaded = useAppStore((s) => s.setLoaded)
   const setChatStats = useAppStore((s) => s.setChatStats)
   const getChatStats = useAppStore((s) => s.getChatStats)
+  const getChatMessages = useAppStore((s) => s.getChatMessages)
+  const appendChatMessage = useAppStore((s) => s.appendChatMessage)
+  const clearChatMessages = useAppStore((s) => s.clearChatMessages)
+  const setAutoReplyGlobalGenerating = useAppStore((s) => s.setAutoReplyGlobalGenerating)
+  const setAutoReplyGlobalError = useAppStore((s) => s.setAutoReplyGlobalError)
 
   const [activeRightTool, setActiveRightTool] = useState('')
   const [webviewReloadKey, setWebviewReloadKey] = useState(0)
@@ -157,6 +163,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     const unsub = window.pingChat.onChatMessage((payload) => {
       setAutoReplyMessages((prev) => [...prev, payload])
+      appendChatMessage(payload.partition, payload)
     })
     return unsub
   }, [])
@@ -223,10 +230,25 @@ export function App(): JSX.Element {
   autoReplyMessagesRef.current = autoReplyMessages
   const pendingQueueRef = useRef<ChatMessage[]>([])
   const isProcessingQueueRef = useRef(false)
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+  const isPollingRef = useRef(false)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const processedContactsRef = useRef<Set<string>>(new Set())
 
   const handleReplyFeedback = (id: string, feedback: 'up' | 'down'): void => {
     void window.pingChat.setReplyFeedback(id, feedback)
     setReplyFeedbackMap((prev) => ({ ...prev, [id]: feedback }))
+  }
+
+  const clearJsMemory = (): void => {
+    setAutoReplyMessages([])
+    processedReplyKeys.current.clear()
+    setRecentReplyLogs([])
+    clearChatMessages()
+    setProcessedCount(0)
+    pendingQueueRef.current.length = 0
+    console.log('[Memory] cleared')
   }
 
   const handleQueuedMessage = async (message: ChatMessage): Promise<void> => {
@@ -418,7 +440,8 @@ export function App(): JSX.Element {
       }
     }
     if (autoReplyModeRef.current === 'single') return
-    if (globalPendingPartitionRef.current && message.partition !== globalPendingPartitionRef.current) return
+    // Global mode is handled by pollUnreadContacts based on unread contact list
+    if (autoReplyModeRef.current === 'global') return
 
     processedReplyKeys.current.add(key)
     setProcessedCount((count) => count + 1)
@@ -426,11 +449,75 @@ export function App(): JSX.Element {
     startQueueProcessing()
   }
 
+  const pollUnreadContacts = async (): Promise<void> => {
+    if (!autoReplyEnabledRef.current || autoReplyModeRef.current !== 'global' || isPollingRef.current) return
+    isPollingRef.current = true
+    setAutoReplyGlobalGenerating(true)
+    setAutoReplyGlobalError(null)
+    try {
+      for (const session of sessionsRef.current) {
+        if (!session.partition) continue
+        const stats = getChatStats(session.partition)
+        if (!stats?.unreadContacts?.length) continue
+        const unreadUsers = stats.unreadContacts
+          .filter((c: any) => !c.isGroup && c.unread > 0)
+          .sort((a: any, b: any) => b.unread - a.unread)
+        for (const contact of unreadUsers) {
+          if (!autoReplyEnabledRef.current || autoReplyModeRef.current !== 'global') break
+          const key = `${session.partition}:${contact.name}`
+          if (processedContactsRef.current.has(key)) continue
+          await window.pingChat.selectChat(session.partition, contact.name)
+          await new Promise((r) => setTimeout(r, 800))
+          const msgs = getChatMessages(session.partition) || []
+          const userMsgs = msgs.filter((m: ChatMessage) => m.sender === contact.name && m.isFromUser)
+          const lastMsg = userMsgs[userMsgs.length - 1]
+          if (!lastMsg) continue
+          const msgKey = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
+          if (processedReplyKeys.current.has(msgKey)) continue
+          processedReplyKeys.current.add(msgKey)
+          processedContactsRef.current.add(key)
+          setProcessedCount((count) => count + 1)
+          try {
+            await handleQueuedMessage(lastMsg)
+          } catch (e: any) {
+            console.error('[AutoReply] global mode error:', e)
+            setAutoReplyGlobalError(e?.message || '自动回复处理失败')
+          }
+          processedContactsRef.current.delete(key)
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+      }
+    } finally {
+      isPollingRef.current = false
+      setAutoReplyGlobalGenerating(false)
+    }
+  }
+
   useEffect(() => {
     if (!autoReplyEnabled) return
     const lastMsg = autoReplyMessages[autoReplyMessages.length - 1]
     enqueueAutoReplyMessage(lastMsg)
   }, [autoReplyMessages, autoReplyEnabled])
+
+  useEffect(() => {
+    if (!autoReplyEnabled || autoReplyMode !== 'global') {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+      return
+    }
+    void pollUnreadContacts()
+    pollTimerRef.current = setInterval(() => {
+      void pollUnreadContacts()
+    }, 3000)
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }
+  }, [autoReplyEnabled, autoReplyMode])
 
   useEffect(() => {
     if (autoReplyEnabled) return
@@ -579,6 +666,7 @@ export function App(): JSX.Element {
             onSelectSession={setActiveSessionId}
             onCloseSession={closeSession}
             onRefreshSession={refreshSession}
+            onRenameSession={(id: string, name: string) => updateSession(id, (s: ChatSession) => ({ ...s, name }))}
           />
           <MainPanel sessions={sessions} activeSession={activeSession} platform={activePlatform} reloadTrigger={webviewReloadKey} />
           {activeRightTool === 'environment' && (
@@ -625,6 +713,7 @@ export function App(): JSX.Element {
                   recentReplyLogs={recentReplyLogs}
                   replyFeedbackMap={replyFeedbackMap}
                   onReplyFeedback={handleReplyFeedback}
+                  onClearMemory={clearJsMemory}
                 />
               </Suspense>
             </ErrorBoundary>

@@ -21,9 +21,7 @@ export function TitleBar({ onlineCount, offlineCount, onRefresh }: { onlineCount
       <div className="brand-block">
         <span className="brand-name">PingChat {version || '—'}</span>
         <span>在线: <b className="green">{onlineCount}</b></span>
-        <span>离线: <b className="red">0</b></span>
-        <span style={{ fontSize: 11, color: '#8c96a1', marginLeft: 0, paddingLeft: 12, borderLeft: '1px solid #2a2d30' }}>刷新页面</span>
-        <button className={`tiny-icon${spinning ? ' spinning' : ''}`} style={{ marginLeft: -8 }} onClick={handleRefresh} onAnimationEnd={() => setSpinning(false)}><RefreshCw size={12} /></button>
+        <span>离线: <b className="red">{offlineCount}</b></span>
       </div>
       <div className="title-spacer" />
       <div className="top-actions">

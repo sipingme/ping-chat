@@ -6,7 +6,7 @@ import {
 import type { Platform, ChatSession } from '../types'
 
 function SessionCard({
-  session, active, accent, onSelect, onClose, onRefresh,
+  session, active, accent, onSelect, onClose, onRefresh, onRename,
 }: {
   session: ChatSession
   active: boolean
@@ -14,8 +14,11 @@ function SessionCard({
   onSelect: () => void
   onClose: () => void
   onRefresh?: () => void
+  onRename?: (name: string) => void
 }): JSX.Element {
   const [spinning, setSpinning] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState(session.name)
   const handleRefresh = (event: React.MouseEvent): void => {
     event.stopPropagation()
     setSpinning(true)
@@ -31,8 +34,19 @@ function SessionCard({
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
       <div className="session-content">
-        <div className="session-title-row">
-          <strong>{session.name}</strong>
+        <div className="session-title-row" onDoubleClick={() => { if (onRename) { setEditing(true); setEditName(session.name); } }}>
+          {editing ? (
+            <input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={() => { setEditing(false); if (onRename && editName.trim() && editName !== session.name) onRename(editName.trim()) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { setEditing(false); if (onRename && editName.trim() && editName !== session.name) onRename(editName.trim()) } if (e.key === 'Escape') { setEditing(false); setEditName(session.name) } }}
+              autoFocus
+              style={{ fontSize: 13, fontWeight: 700, background: '#1a1f23', border: '1px solid ' + accent, color: '#f3f5f7', borderRadius: 3, padding: '2px 4px', outline: 'none', width: '100%' }}
+            />
+          ) : (
+            <strong style={{ cursor: onRename ? 'text' : 'default', userSelect: 'none' }}>{session.name}</strong>
+          )}
         </div>
       </div>
       <div className="session-card-actions">
@@ -57,6 +71,7 @@ export function ConversationSidebar({
   onSelectSession,
   onCloseSession,
   onRefreshSession,
+  onRenameSession,
 }: {
   platform: Platform
   sessions: ChatSession[]
@@ -65,6 +80,7 @@ export function ConversationSidebar({
   onSelectSession: (id: string) => void
   onCloseSession: (id: string) => void
   onRefreshSession?: () => void
+  onRenameSession?: (id: string, name: string) => void
 }): JSX.Element {
   return (
     <aside className="conversation-sidebar">
@@ -99,6 +115,7 @@ export function ConversationSidebar({
               onSelect={() => onSelectSession(session.id)}
               onClose={() => onCloseSession(session.id)}
               onRefresh={onRefreshSession}
+              onRename={onRenameSession ? (name) => onRenameSession(session.id, name) : undefined}
             />
           ))
         )}
