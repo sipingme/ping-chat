@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { MessageCircle } from 'lucide-react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { PLATFORMS } from '../../shared/platforms'
@@ -9,11 +9,11 @@ import type {
   Platform,
   ProxyConfig,
 } from './types'
-import { buildSystemPrompt, generateRandomFingerprint, interpolateTemplateVars } from './config/defaults'
+import { generateRandomFingerprint } from './config/defaults'
+import { useAutoReplyEngine } from './hooks/useAutoReplyEngine'
 import { initLocale, setLocale, t } from './i18n'
 import { useTranslation } from './i18n/useTranslation'
 import { useSensitiveWords } from './hooks/useSensitiveWords'
-import { handleCommand } from './utils/commandHandler'
 import { pluginManager } from './utils/pluginManager'
 import { translateText } from './utils/translate'
 import { useAppStore } from './store/appStore'
@@ -107,12 +107,10 @@ export function App(): JSX.Element {
   const [autoReplyMode, setAutoReplyMode] = useState<'global' | 'single'>('global')
   const [monitoringEnabled, setMonitoringEnabled] = useState(true)
   const [autoReplyMessages, setAutoReplyMessages] = useState<ChatMessage[]>([])
-  const [autoReplyProcessing, setAutoReplyProcessing] = useState(false)
   const [replyFeedbackMap, setReplyFeedbackMap] = useState<Record<string, 'up' | 'down'>>({})
-  const [recentReplyLogs, setRecentReplyLogs] = useState<Array<{ id: string; type: string; content: string; contact: string }>>([])
   const [autoReplyTarget, setAutoReplyTarget] = useState('')
   const [autoReplyConfig, setAutoReplyConfig] = useState({
-    apiKey: 'sk-cp-eEhluB-WZIP6LV2qAJO_TYawZIIiwtcCd7CnA73soACxZygFWJx2JycyO7l_100a5FnOh6O0-FPojZzbibf02yw6SAF9jAQg6PGtyew3IDvMKJpJ14QZKwY',
+    apiKey: '',
     endpoint: 'https://api.minimaxi.com/v1/chat/completions',
     model: 'MiniMax-M2.7',
     systemPrompt: '你是一个热情友好的客服助手，善于用活泼亲切的语气与用户沟通。',
@@ -172,9 +170,11 @@ export function App(): JSX.Element {
     const unsub = window.pingChat.onChatStats((payload) => {
       console.log('[Renderer ChatStats]', payload)
       const partition = payload.partition || activeSession?.partition || ''
-      if (partition) {
-        setChatStats(partition, { ...payload, partition })
+      if (!partition) {
+        console.warn('[Renderer ChatStats] dropping message with empty partition')
+        return
       }
+      setChatStats(partition, { ...payload, partition })
     })
     return unsub
   }, [activeSession?.partition])
@@ -214,319 +214,31 @@ export function App(): JSX.Element {
     })()
   }, [])
 
-  // Auto-reply: generate AI reply when new user message arrives
-  const autoReplyConfigRef = useRef(autoReplyConfig)
-  autoReplyConfigRef.current = autoReplyConfig
-  const autoReplyEnabledRef = useRef(autoReplyEnabled)
-  autoReplyEnabledRef.current = autoReplyEnabled
-  const autoReplyModeRef = useRef(autoReplyMode)
-  autoReplyModeRef.current = autoReplyMode
-  const autoReplyTargetRef = useRef(autoReplyTarget)
-  autoReplyTargetRef.current = autoReplyTarget
-  const processedReplyKeys = useRef(new Set<string>())
-  const [processedCount, setProcessedCount] = useState(0)
-  const globalPendingPartitionRef = useRef<string | null>(null)
-  const autoReplyMessagesRef = useRef<ChatMessage[]>([])
-  autoReplyMessagesRef.current = autoReplyMessages
-  const pendingQueueRef = useRef<ChatMessage[]>([])
-  const isProcessingQueueRef = useRef(false)
-  const sessionsRef = useRef(sessions)
-  sessionsRef.current = sessions
-  const isPollingRef = useRef(false)
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const processedContactsRef = useRef<Set<string>>(new Set())
+  const {
+    autoReplyProcessing,
+    processedCount,
+    recentReplyLogs,
+    replyCountdown,
+    clearJsMemory,
+  } = useAutoReplyEngine({
+    autoReplyConfig,
+    autoReplyEnabled,
+    autoReplyMode,
+    autoReplyTarget,
+    sessions,
+    autoReplyMessages,
+    setAutoReplyMessages,
+    getChatStats,
+    getChatMessages,
+    clearChatMessages,
+    setAutoReplyGlobalGenerating,
+    setAutoReplyGlobalError,
+  })
 
   const handleReplyFeedback = (id: string, feedback: 'up' | 'down'): void => {
     void window.pingChat.setReplyFeedback(id, feedback)
     setReplyFeedbackMap((prev) => ({ ...prev, [id]: feedback }))
   }
-
-  const clearJsMemory = (): void => {
-    setAutoReplyMessages([])
-    processedReplyKeys.current.clear()
-    setRecentReplyLogs([])
-    clearChatMessages()
-    setProcessedCount(0)
-    pendingQueueRef.current.length = 0
-    console.log('[Memory] cleared')
-  }
-
-  const handleQueuedMessage = async (message: ChatMessage): Promise<void> => {
-    const config = autoReplyConfigRef.current
-    if (!config?.apiKey) return
-
-    if (config.blacklist.length > 0 && config.blacklist.some((b) => message.sender.includes(b))) {
-      return
-    }
-
-    // Plugin hook: onMessage
-    if (config.enablePlugins && config.pluginRules.length > 0) {
-      pluginManager.loadRules(config.pluginRules)
-      const pluginReply = pluginManager.onMessage({ sender: message.sender, content: message.content, isFromUser: message.isFromUser })
-      if (pluginReply) {
-        await window.pingChat.sendReply(message.partition, pluginReply, config.autoSend)
-        return
-      }
-    }
-
-    // Command handler
-    if (config.enableCommands) {
-      const cmdResult = handleCommand(message.content, {
-        autoReplyEnabled: autoReplyEnabledRef.current,
-        processedCount: processedCount,
-        platform: message.partition.split(':')[1]?.split('-')[0] || 'unknown',
-      })
-      if (cmdResult.handled && cmdResult.reply) {
-        await window.pingChat.sendReply(message.partition, cmdResult.reply, config.autoSend)
-        return
-      }
-    }
-
-    if (config.keywords.length > 0 && config.keywords.some((k) => message.content.includes(k))) {
-      const keywordReply = interpolateTemplateVars(config.keywordResponse, { contactName: message.sender, partition: message.partition })
-      await window.pingChat.sendReply(message.partition, keywordReply, config.autoSend)
-      window.pingChat.logReply({
-        timestamp: Date.now(),
-        partition: message.partition,
-        platform: message.partition.split(':')[1]?.split('-')[0] || 'unknown',
-        contact: message.sender,
-        content: keywordReply,
-        type: 'keyword',
-        success: true,
-      }).then((entry: any) => {
-        if (entry?.id) {
-          setRecentReplyLogs((prev) => [{ id: entry.id, type: 'keyword', content: keywordReply, contact: message.sender }, ...prev.slice(0, 19)])
-        }
-      })
-      return
-    }
-
-    if (config.delaySeconds > 0) {
-      await new Promise((resolve) => setTimeout(resolve, config.delaySeconds * 1000))
-    }
-
-    let history = autoReplyMessagesRef.current.filter((m) => m.partition === message.partition)
-    if (config.contextRounds > 0) {
-      history = history.slice(-config.contextRounds * 2)
-    }
-    const fullSystem = buildSystemPrompt(config)
-
-    const msgs = [
-      { role: 'system', content: fullSystem },
-      ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
-    ]
-
-    try {
-      const res = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.model,
-          messages: msgs,
-          temperature: config.temperature,
-          ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
-          ...(config.topP < 1 ? { top_p: config.topP } : {}),
-          ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
-          ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data.error?.message || `请求失败 (${res.status})`)
-      }
-      let reply = data.choices?.[0]?.message?.content
-      if (reply) {
-        reply = reply.replace(/<think(?:ing)?>.*?<\/think(?:ing)?>/gs, '')
-        reply = reply.replace(/<reason(?:ing)?>.*?<\/reason(?:ing)?>/gs, '')
-        reply = reply.trim()
-        if (config.autoSend) {
-          const interpolatedReply = interpolateTemplateVars(reply, { contactName: message.sender, partition: message.partition })
-          await window.pingChat.selectChat(message.partition, message.sender)
-          await new Promise((resolve) => setTimeout(resolve, 500))
-          await window.pingChat.sendReply(message.partition, interpolatedReply, config.autoSend)
-          window.pingChat.logReply({
-            timestamp: Date.now(),
-            partition: message.partition,
-            platform: message.partition.split(':')[1]?.split('-')[0] || 'unknown',
-            contact: message.sender,
-            content: reply,
-            type: 'ai',
-            success: true,
-            model: config.model,
-          }).then((entry: any) => {
-            if (entry?.id) {
-              setRecentReplyLogs((prev) => [{ id: entry.id, type: 'ai', content: reply, contact: message.sender }, ...prev.slice(0, 19)])
-            }
-          })
-        } else {
-          globalPendingPartitionRef.current = message.partition
-        }
-      }
-    } catch (err: any) {
-      console.error('[AutoReply] AI generation failed:', err)
-      window.pingChat.logReply({
-        timestamp: Date.now(),
-        partition: message.partition,
-        platform: message.partition.split(':')[1]?.split('-')[0] || 'unknown',
-        contact: message.sender,
-        content: '',
-        type: 'ai',
-        success: false,
-        error: err?.message || String(err),
-        model: config.model,
-      }).then((entry: any) => {
-        if (entry?.id) {
-          setRecentReplyLogs((prev) => [{ id: entry.id, type: 'ai', content: '', contact: message.sender }, ...prev.slice(0, 19)])
-        }
-      })
-    }
-  }
-
-  const startQueueProcessing = (): void => {
-    if (isProcessingQueueRef.current) return
-    isProcessingQueueRef.current = true
-    setAutoReplyProcessing(true)
-    void (async () => {
-      try {
-        while (pendingQueueRef.current.length > 0) {
-          if (!autoReplyEnabledRef.current) {
-            pendingQueueRef.current.length = 0
-            break
-          }
-          const nextMessage = pendingQueueRef.current.shift()
-          if (!nextMessage) continue
-          await handleQueuedMessage(nextMessage)
-        }
-      } finally {
-        isProcessingQueueRef.current = false
-        setAutoReplyProcessing(false)
-        if (pendingQueueRef.current.length > 0) {
-          startQueueProcessing()
-        }
-      }
-    })()
-  }
-
-  const enqueueAutoReplyMessage = (message?: ChatMessage): void => {
-    if (!autoReplyEnabledRef.current) return
-    if (!message) return
-    if (globalPendingPartitionRef.current && !message.isFromUser && message.partition === globalPendingPartitionRef.current) {
-      globalPendingPartitionRef.current = null
-      return
-    }
-    if (!message.isFromUser) return
-
-    const key = `${message.partition}:${message.sender}:${message.content}`
-    if (processedReplyKeys.current.has(key)) return
-
-    const stats = getChatStats(message.partition)
-    const contact = stats?.contacts?.find((c: { name: string }) => c.name === message.sender)
-    if (contact?.isGroup) {
-      const config = autoReplyConfigRef.current
-      if (config?.groupWhitelist?.length) {
-        if (!config.groupWhitelist.some((w) => message.sender.includes(w))) return
-      } else if (config?.groupBlacklist?.length) {
-        if (config.groupBlacklist.some((b) => message.sender.includes(b))) return
-      } else {
-        // default: ignore group messages unless explicitly configured
-        return
-      }
-      if (config?.mentionOnly) {
-        const mentionPattern = config.myNickname ? new RegExp(`@${config.myNickname}|@所有人|@all`, 'i') : /@所有人|@all/i
-        if (!mentionPattern.test(message.content)) return
-      }
-    }
-    if (autoReplyModeRef.current === 'single') return
-    // Global mode is handled by pollUnreadContacts based on unread contact list
-    if (autoReplyModeRef.current === 'global') return
-
-    processedReplyKeys.current.add(key)
-    setProcessedCount((count) => count + 1)
-    pendingQueueRef.current.push(message)
-    startQueueProcessing()
-  }
-
-  const pollUnreadContacts = async (): Promise<void> => {
-    if (!autoReplyEnabledRef.current || autoReplyModeRef.current !== 'global' || isPollingRef.current) return
-    isPollingRef.current = true
-    setAutoReplyGlobalGenerating(true)
-    setAutoReplyGlobalError(null)
-    try {
-      for (const session of sessionsRef.current) {
-        if (!session.partition) continue
-        const stats = getChatStats(session.partition)
-        if (!stats?.unreadContacts?.length) continue
-        const unreadUsers = stats.unreadContacts
-          .filter((c: any) => !c.isGroup && c.unread > 0)
-          .sort((a: any, b: any) => b.unread - a.unread)
-        for (const contact of unreadUsers) {
-          if (!autoReplyEnabledRef.current || autoReplyModeRef.current !== 'global') break
-          const key = `${session.partition}:${contact.name}`
-          if (processedContactsRef.current.has(key)) continue
-          await window.pingChat.selectChat(session.partition, contact.name)
-          await new Promise((r) => setTimeout(r, 800))
-          const msgs = getChatMessages(session.partition) || []
-          const userMsgs = msgs.filter((m: ChatMessage) => m.sender === contact.name && m.isFromUser)
-          const lastMsg = userMsgs[userMsgs.length - 1]
-          if (!lastMsg) continue
-          const msgKey = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
-          if (processedReplyKeys.current.has(msgKey)) continue
-          processedReplyKeys.current.add(msgKey)
-          processedContactsRef.current.add(key)
-          setProcessedCount((count) => count + 1)
-          try {
-            await handleQueuedMessage(lastMsg)
-          } catch (e: any) {
-            console.error('[AutoReply] global mode error:', e)
-            setAutoReplyGlobalError(e?.message || '自动回复处理失败')
-          }
-          processedContactsRef.current.delete(key)
-          await new Promise((r) => setTimeout(r, 1000))
-        }
-      }
-    } finally {
-      isPollingRef.current = false
-      setAutoReplyGlobalGenerating(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!autoReplyEnabled) return
-    const lastMsg = autoReplyMessages[autoReplyMessages.length - 1]
-    enqueueAutoReplyMessage(lastMsg)
-  }, [autoReplyMessages, autoReplyEnabled])
-
-  useEffect(() => {
-    if (!autoReplyEnabled || autoReplyMode !== 'global') {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
-        pollTimerRef.current = null
-      }
-      return
-    }
-    void pollUnreadContacts()
-    pollTimerRef.current = setInterval(() => {
-      void pollUnreadContacts()
-    }, 3000)
-    return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
-        pollTimerRef.current = null
-      }
-    }
-  }, [autoReplyEnabled, autoReplyMode])
-
-  useEffect(() => {
-    if (autoReplyEnabled) return
-    pendingQueueRef.current.length = 0
-    if (isProcessingQueueRef.current) {
-      isProcessingQueueRef.current = false
-      setAutoReplyProcessing(false)
-    }
-  }, [autoReplyEnabled])
 
   useEffect(() => {
     if (!loaded) return
@@ -710,6 +422,7 @@ export function App(): JSX.Element {
                   setAutoReplyTarget={setAutoReplyTarget}
                   autoReplyMode={autoReplyMode}
                   setAutoReplyMode={setAutoReplyMode}
+                  replyCountdown={replyCountdown}
                   recentReplyLogs={recentReplyLogs}
                   replyFeedbackMap={replyFeedbackMap}
                   onReplyFeedback={handleReplyFeedback}

@@ -51,9 +51,10 @@ export function MainPanel({ sessions, activeSession, platform, reloadTrigger }: 
     <main className={`main-panel ${activeSession ? 'with-webview' : ''}`}>
       {hasWebviewPlatform ? (
         <div className="webview-stage">
-          {webviewSessions.map((session) => {
+          {webviewSessions
+            .filter((session) => session.id === activeSession?.id)
+            .map((session) => {
             const platformInfo = getPlatformById(session.platformId)
-            const isActive = session.id === activeSession?.id
             return (
               <webview
                 key={`${session.id}-${reloadTrigger ?? 0}`}
@@ -68,9 +69,6 @@ export function MainPanel({ sessions, activeSession, platform, reloadTrigger }: 
                   left: 0,
                   width: '100%',
                   height: '100%',
-                  opacity: isActive ? 1 : 0,
-                  pointerEvents: isActive ? 'auto' : 'none',
-                  zIndex: isActive ? 1 : 0,
                 }}
               />
             )

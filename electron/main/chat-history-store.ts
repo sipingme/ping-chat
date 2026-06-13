@@ -7,6 +7,7 @@ interface ChatHistoryEntry {
   content: string
   isFromUser: boolean
   timestamp: number
+  isGroup?: boolean
 }
 
 interface HistoryStore {

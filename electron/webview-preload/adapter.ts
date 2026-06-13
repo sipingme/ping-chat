@@ -9,6 +9,7 @@ export interface ChatMessagePayload {
   content: string
   isFromUser: boolean
   timestamp: number
+  isGroup?: boolean
 }
 
 export interface ChatContact {
@@ -33,6 +34,8 @@ export interface PlatformAdapter {
   readonly name: string
   /** 聊天列表项的 CSS 选择器（用于点击事件归属判断） */
   readonly chatItemSelector: string
+  /** 聊天消息容器的 CSS 选择器（用于 MutationObserver 精确监听，缩小范围提升性能） */
+  readonly messageContainerSelector: string
   /** 根据当前页面 hostname 判断是否匹配本平台 */
   detect(): boolean
   /** 从聊天列表项 DOM 元素中提取联系人信息 */

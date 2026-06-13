@@ -30,6 +30,7 @@ export type ChatMessage = {
   content: string
   isFromUser: boolean
   timestamp: number
+  isGroup?: boolean
 }
 
 export type ProxyConfig = {

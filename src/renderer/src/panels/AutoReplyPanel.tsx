@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Eraser, Loader2, MessageSquare, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { Clock, Eraser, Loader2, MessageSquare, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import type { ChatSession, ChatMessage, AutoReplyConfig, ChatStats } from '../types'
 import { CustomSelect, Switch, ProxyField } from '../components/ui/BaseUI'
 import { MonitorPanel } from '../components/MonitorPanel'
 import { useAppStore } from '../store/appStore'
-import { buildSystemPrompt, interpolateTemplateVars } from '../config/defaults'
+import { interpolateTemplateVars } from '../config/defaults'
+import { buildMessages, LLMService } from '../services/llmService'
 
 export function AutoReplyPanel({
   session,
@@ -24,6 +25,7 @@ export function AutoReplyPanel({
   setAutoReplyTarget,
   autoReplyMode,
   setAutoReplyMode,
+  replyCountdown = null,
   recentReplyLogs,
   replyFeedbackMap,
   onReplyFeedback,
@@ -46,6 +48,7 @@ export function AutoReplyPanel({
   setAutoReplyTarget: (v: string) => void
   autoReplyMode: 'global' | 'single'
   setAutoReplyMode: (v: 'global' | 'single') => void
+  replyCountdown?: number | null
   recentReplyLogs?: Array<{ id: string; type: string; content: string; contact: string }>
   replyFeedbackMap?: Record<string, 'up' | 'down'>
   onReplyFeedback?: (id: string, feedback: 'up' | 'down') => void
@@ -53,30 +56,61 @@ export function AutoReplyPanel({
 }): JSX.Element {
   const [activeTab, setActiveTab] = useState<'monitor' | 'overview' | 'reply' | 'model'>('monitor')
   const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState('')
   const [manualReply, setManualReply] = useState('')
   const [replyTarget, setReplyTarget] = useState('')
   const [generatedReply, setGeneratedReply] = useState('')
   const [workbenchGenerating, setWorkbenchGenerating] = useState(false)
+  const [autoReplyGenerating, setAutoReplyGenerating] = useState(false)
+  const [singleModeCountdown, setSingleModeCountdown] = useState<number | null>(null)
+  const [generatingReply, setGeneratingReply] = useState(false)
   const [workbenchPrompt, setWorkbenchPrompt] = useState('')
   const [workbenchError, setWorkbenchError] = useState('')
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const storeChatStats = useAppStore((state) => session ? state.chatStatsMap[session.partition] : undefined)
   const chatStats = storeChatStats ?? chatStatsProp
   const globalGenerating = useAppStore((s) => s.autoReplyGlobalGenerating)
   const globalError = useAppStore((s) => s.autoReplyGlobalError)
 
+  const llmServiceRef = useRef(new LLMService(config))
+  llmServiceRef.current.updateConfig(config)
+
   useEffect(() => {
     const unsub = window.pingChat.onChatHistory((payload) => {
       console.log('[Renderer] chat:history received', payload.history.length, 'msgs, partition:', payload.partition, 'session partition:', session?.partition)
       if (!session || payload.partition === session.partition || !payload.partition) {
         console.log('[Renderer] updating chatHistory with', payload.history.length, 'messages')
-        setChatHistory(payload.history.map((m) => ({ ...m, partition: payload.partition })))
+        setChatHistory((prev) => {
+          const incoming = payload.history.map((m) => ({ ...m, partition: payload.partition }))
+          const incomingMaxTs = incoming.length > 0 ? Math.max(...incoming.map((m) => m.timestamp)) : 0
+          const realtimeMessages = prev.filter((m) => m.timestamp > incomingMaxTs)
+          const merged = [...incoming, ...realtimeMessages]
+          merged.sort((a, b) => a.timestamp - b.timestamp)
+          return merged
+        })
       } else {
         console.log('[Renderer] chat:history ignored, partition mismatch')
       }
+    })
+    return unsub
+  }, [session?.partition])
+
+  useEffect(() => {
+    if (!window.pingChat.onChatMessage) return
+    const unsub = window.pingChat.onChatMessage((payload) => {
+      if (!session) return
+      if (payload.partition !== session.partition && payload.partition !== '') return
+      if (payload.isGroup) return // 群聊消息不应出现在回复工作台
+      setChatHistory((prev) => {
+        if (prev.some((m) => m.sender === payload.sender && m.content === payload.content && m.timestamp === payload.timestamp)) {
+          return prev
+        }
+        return [...prev, payload]
+      })
     })
     return unsub
   }, [session?.partition])
@@ -116,10 +150,7 @@ export function AutoReplyPanel({
       if (activeTab === 'reply') {
         setAutoReplyTarget(payload.name)
       }
-      // Only switch to overview if not currently on the reply tab
-      if (activeTab !== 'reply') {
-        handleScrollTo('overview')
-      }
+      // Stay on current tab — do not auto-switch to overview on contact click
     })
     return () => { unlisten() }
   }, [session?.partition, activeTab])
@@ -177,6 +208,7 @@ export function AutoReplyPanel({
   useEffect(() => {
     if (hadPendingRef.current && pendingConversation.length === 0) {
       setWorkbenchPrompt('')
+      setGeneratedReply('')
     }
     hadPendingRef.current = pendingConversation.length > 0
   }, [pendingConversation.length])
@@ -184,45 +216,86 @@ export function AutoReplyPanel({
   // Single-mode auto-reply: when new pending messages arrive, auto-generate and send
   const singleAutoReplyKeyRef = useRef('')
   const isAutoSendingRef = useRef(false)
-  const prevPendingLenRef = useRef(0)
+  const pendingConversationRef = useRef(pendingConversation)
+  pendingConversationRef.current = pendingConversation
+  const autoReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
-    const hasNewPending = pendingConversation.length > 0 && prevPendingLenRef.current === 0
-    prevPendingLenRef.current = pendingConversation.length
-    if (!hasNewPending) return
-    if (!enabled || autoReplyMode !== 'single' || !autoReplyTarget || !session) return
-    if (workbenchGenerating || isAutoSendingRef.current) return
-
-    const key = pendingConversation.map((m) => m.sender + ':' + m.content + ':' + m.timestamp).join('|')
-    if (singleAutoReplyKeyRef.current === key) return
-    singleAutoReplyKeyRef.current = key
-
-    isAutoSendingRef.current = true
-    void (async () => {
-      try {
-        console.log('[AutoReply] single mode triggered for', autoReplyTarget, 'delay:', config.delaySeconds, 'autoSend:', config.autoSend)
-        const reply = await handleWorkbenchGenerate(autoReplyTarget, pendingConversation)
-        if (!reply || !session) {
-          console.log('[AutoReply] no reply or no session, aborting')
-          return
-        }
-        if (config.autoSend) {
-          if (config.delaySeconds > 0) {
-            console.log('[AutoReply] delaying', config.delaySeconds, 'seconds before sending...')
-            await new Promise((r) => setTimeout(r, config.delaySeconds * 1000))
-            console.log('[AutoReply] delay complete, sending reply')
-          } else {
-            console.log('[AutoReply] no delay, sending immediately')
-          }
-          onSendReply(session.partition, reply, config.autoSend)
-          setWorkbenchPrompt('')
-        } else {
-          console.log('[AutoReply] autoSend is false, not sending')
-        }
-      } finally {
-        isAutoSendingRef.current = false
+    if (pendingConversation.length === 0) {
+      if (autoReplyTimerRef.current) {
+        clearTimeout(autoReplyTimerRef.current)
+        autoReplyTimerRef.current = null
       }
-    })()
-  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSend, onSendReply])
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current)
+        countdownTimerRef.current = null
+      }
+      setSingleModeCountdown(null)
+      return
+    }
+    if (!enabled || autoReplyMode !== 'single' || !autoReplyTarget || !session) return
+    if (isAutoSendingRef.current || workbenchGenerating || generatingReply) return
+    if (autoReplyTimerRef.current || countdownTimerRef.current) return
+
+    const doGenerate = (): void => {
+      autoReplyTimerRef.current = setTimeout(() => {
+        autoReplyTimerRef.current = null
+        const currentPending = pendingConversationRef.current
+        if (currentPending.length === 0) return
+        if (isAutoSendingRef.current) return
+
+        const key = currentPending.map((m) => m.sender + ':' + m.content + ':' + m.timestamp).join('|')
+        if (singleAutoReplyKeyRef.current === key) return
+        singleAutoReplyKeyRef.current = key
+
+        isAutoSendingRef.current = true
+        setAutoReplyGenerating(true)
+        setGeneratingReply(true)
+        void (async () => {
+          try {
+            console.log('[AutoReply] single mode generating for', autoReplyTarget, 'messages:', currentPending.length)
+            const reply = await handleWorkbenchGenerate(autoReplyTarget, currentPending)
+            if (!reply || !session) {
+              console.log('[AutoReply] no reply, aborting')
+              return
+            }
+            setGeneratedReply(reply)
+            if (config.autoSend) {
+              console.log('[AutoReply] sending reply')
+              onSendReply(session.partition, reply, config.autoSend)
+              setGeneratedReply('')
+            } else {
+              console.log('[AutoReply] autoSend is false, filling generated reply')
+            }
+          } finally {
+            isAutoSendingRef.current = false
+            setAutoReplyGenerating(false)
+            setGeneratingReply(false)
+          }
+        })()
+      }, 200)
+    }
+
+    if (config.delaySeconds > 0) {
+      setSingleModeCountdown(config.delaySeconds)
+      const startTime = Date.now()
+      countdownTimerRef.current = setInterval(() => {
+        const elapsed = Date.now() - startTime
+        const remaining = Math.max(0, Math.ceil((config.delaySeconds * 1000 - elapsed) / 1000))
+        setSingleModeCountdown(remaining)
+        if (remaining <= 0) {
+          if (countdownTimerRef.current) {
+            clearInterval(countdownTimerRef.current)
+            countdownTimerRef.current = null
+          }
+          setSingleModeCountdown(null)
+          doGenerate()
+        }
+      }, 200)
+    } else {
+      doGenerate()
+    }
+  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSend, onSendReply, workbenchGenerating, generatingReply])
 
   useLayoutEffect(() => {
     const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
@@ -245,37 +318,18 @@ export function AutoReplyPanel({
   const handleGenerate = async (targetSender: string) => {
     if (!config.apiKey || generating) return
     setGenerating(true)
+    setGenerateError('')
     try {
-      let history = grouped[targetSender] || []
-      if (config.contextRounds > 0) {
-        history = history.slice(-config.contextRounds * 2)
-      }
-      const fullSystem = buildSystemPrompt(config)
-
-      const msgs = [
-        { role: 'system', content: fullSystem },
-        ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
-      ]
-      const res = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({
-              model: config.model,
-              messages: msgs,
-              temperature: config.temperature,
-              ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
-              ...(config.topP < 1 ? { top_p: config.topP } : {}),
-              ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
-              ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
-            }),
-      })
-      const data = await res.json()
-      const reply = data.choices?.[0]?.message?.content
+      const history = grouped[targetSender] || []
+      const msgs = buildMessages(history, config)
+      const reply = await llmServiceRef.current.generateReply(msgs)
       if (reply && session) {
         onSendReply(session.partition, reply, config.autoSend)
       }
     } catch (e) {
-      console.error('Generate reply failed:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      setGenerateError(msg)
+      console.error('[AutoReply] Generate reply failed:', msg)
     }
     setGenerating(false)
   }
@@ -289,47 +343,14 @@ export function AutoReplyPanel({
     setWorkbenchGenerating(true)
     setWorkbenchError('')
     try {
-      let history = customHistory ?? grouped[targetSender] ?? []
-      if (config.contextRounds > 0) {
-        history = history.slice(-config.contextRounds * 2)
-      }
-      const fullSystem = buildSystemPrompt(config) + (workbenchPrompt.trim() ? '\n\n额外要求：' + workbenchPrompt.trim() : '')
-
-      const msgs = [
-        { role: 'system', content: fullSystem },
-        ...history.map((m) => ({ role: m.isFromUser ? 'user' : 'assistant' as const, content: m.content })),
-      ]
-      if (history.length === 0) {
-        msgs.push({ role: 'user', content: '请直接输出一段打招呼的开场白，不要输出任何思考过程或分析。' })
-      }
-      const res = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({
-              model: config.model,
-              messages: msgs,
-              temperature: config.temperature,
-              ...(config.maxTokens > 0 ? { max_tokens: config.maxTokens } : {}),
-              ...(config.topP < 1 ? { top_p: config.topP } : {}),
-              ...(config.frequencyPenalty !== 0 ? { frequency_penalty: config.frequencyPenalty } : {}),
-              ...(config.presencePenalty !== 0 ? { presence_penalty: config.presencePenalty } : {}),
-            }),
+      const history = customHistory ?? grouped[targetSender] ?? []
+      const msgs = buildMessages(history, config, {
+        extraPrompt: workbenchPrompt.trim() ? '\n\n额外要求：' + workbenchPrompt.trim() : undefined,
+        fallbackMessage: history.length === 0 ? '请直接输出一段打招呼的开场白，不要输出任何思考过程或分析。' : undefined,
       })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data.error?.message || `请求失败 (${res.status})`)
-      }
-      let reply = data.choices?.[0]?.message?.content
-      if (reply) {
-        // Strip reasoning/thinking tags and their content
-        reply = reply.replace(/<think(?:ing)?>.*?<\/think(?:ing)?>/gs, '')
-        reply = reply.replace(/<reason(?:ing)?>.*?<\/reason(?:ing)?>/gs, '')
-        reply = reply.trim()
-        setWorkbenchPrompt(reply)
-        return reply
-      } else {
-        throw new Error('API 未返回有效回复内容')
-      }
+      const reply = await llmServiceRef.current.generateReply(msgs)
+      setGeneratedReply(reply)
+      return reply
     } catch (e) {
       console.error('[Workbench] AI generation failed:', e)
       setWorkbenchError(e instanceof Error ? e.message : '生成失败，请检查网络或 API 配置')
@@ -592,8 +613,9 @@ export function AutoReplyPanel({
                   {pendingConversation.map((m, i) => {
                     const avatarSrc = chatStats?.contacts.find((c) => c.name === m.sender)?.avatar || contactAvatarMap[m.sender]
                     const isSelf = !m.isFromUser
+                    const isLast = i === pendingConversation.length - 1
                     return (
-                      <div key={i} style={{ display: 'flex', justifyContent: isSelf ? 'flex-end' : 'flex-start', marginBottom: 14, gap: 10, alignItems: 'center' }}>
+                      <div key={i} style={{ display: 'flex', justifyContent: isSelf ? 'flex-end' : 'flex-start', marginBottom: isLast ? 0 : 14, gap: 10, alignItems: 'center' }}>
                         {!isSelf && (
                           <div style={{ width: 20, height: 20, borderRadius: 2, flexShrink: 0, overflow: 'hidden', background: '#3a4147' }}>
                             {avatarSrc ? (
@@ -627,33 +649,65 @@ export function AutoReplyPanel({
               </div>
             )}
 
+            {replyCountdown !== null && replyCountdown > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1f262b', border: '1px solid #3a4147' }}>
+                <Clock size={12} style={{ color: '#8c96a1' }} />
+                <span style={{ fontSize: 12, color: '#8c96a1' }}>延迟回复倒计时: <strong style={{ color: '#f3f5f7' }}>{replyCountdown} 秒</strong></span>
+              </div>
+            )}
+            {singleModeCountdown !== null && singleModeCountdown > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1f262b', border: '1px solid #3a4147' }}>
+                <Clock size={12} style={{ color: '#8c96a1' }} />
+                <span style={{ fontSize: 12, color: '#8c96a1' }}>延迟回复倒计时: <strong style={{ color: '#f3f5f7' }}>{singleModeCountdown} 秒</strong></span>
+              </div>
+            )}
+
+            {(generatingReply || (globalGenerating && (replyCountdown === null || replyCountdown <= 0))) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1a2a1a', border: '1px solid #19d973' }}>
+                <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', color: '#19d973' }} />
+                <span style={{ fontSize: 12, color: '#19d973' }}>正在生成回复…</span>
+              </div>
+            )}
+
             {/* 生成回复按钮 */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 className="apply-action"
                 style={{ flex: 1, height: 32, fontSize: 12, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
                 onClick={() => handleWorkbenchGenerate(workbenchTarget)}
-                disabled={workbenchGenerating}
+                disabled={workbenchGenerating || autoReplyGenerating}
               >
-                {workbenchGenerating || globalGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
-                {workbenchGenerating ? '生成中…' : globalGenerating ? '处理中…' : '生成回复'}
+                {workbenchGenerating || autoReplyGenerating || globalGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
+                {workbenchGenerating || autoReplyGenerating ? '生成中…' : globalGenerating ? '处理中…' : '生成回复'}
               </button>
               <button
                 className="secondary-action"
                 style={{ flex: 1, height: 32, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderColor: '#04c768', color: '#04c768' }}
                 onClick={() => {
                   if (!session) return
-                  const content = workbenchPrompt.trim()
+                  const content = generatedReply.trim()
                   if (!content) return
                   onSendReply(session.partition, content)
-                  setWorkbenchPrompt('')
+                  setGeneratedReply('')
                 }}
-                disabled={!session || !workbenchPrompt.trim()}
+                disabled={!session || !generatedReply.trim()}
               >
                 <Zap size={12} />
                 直接发送
               </button>
             </div>
+            {generatedReply && (
+              <div style={{ marginTop: 12 }}>
+                <textarea
+                  className="proxy-textarea"
+                  rows={4}
+                  placeholder="AI 生成的回复将显示在这里…"
+                  value={generatedReply}
+                  onChange={(e) => setGeneratedReply(e.target.value)}
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+            )}
             {workbenchError && (
               <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4, background: '#2a1515', border: '1px solid #5c2a2a', fontSize: 12, color: '#e07a7a', lineHeight: 1.5 }}>
                 {workbenchError}
@@ -686,8 +740,12 @@ export function AutoReplyPanel({
             ]}
             onChange={(val) => {
               setAutoReplyMode(val as 'global' | 'single')
-              if (val === 'single' && replyTarget && !autoReplyTarget) {
-                setAutoReplyTarget(replyTarget)
+              if (val === 'single' && !autoReplyTarget) {
+                const target = replyTarget || [...chatHistory].reverse().find((m) => m.isFromUser)?.sender || ''
+                if (target) {
+                  setReplyTarget(target)
+                  setAutoReplyTarget(target)
+                }
               }
             }}
           />
@@ -862,14 +920,27 @@ export function AutoReplyPanel({
         <div className="proxy-note">选择常用大模型，或输入自定义模型名称</div>
 
         <ProxyField label="API 地址">
-          <input className="proxy-input" placeholder="https://api.minimaxi.com/v1/chat/completions" value={config.endpoint} onChange={(e) => onUpdateConfig({ endpoint: e.target.value })} />
+          <input
+            className="proxy-input"
+            placeholder="https://api.minimaxi.com/v1/chat/completions"
+            value={config.endpoint}
+            onChange={(e) => onUpdateConfig({ endpoint: e.target.value })}
+            onBlur={(e) => {
+              const val = e.target.value.trim()
+              if (val && !/^https?:\/\/.+/.test(val)) {
+                setWorkbenchError('API 地址应以 http:// 或 https:// 开头')
+              } else {
+                setWorkbenchError('')
+              }
+            }}
+          />
         </ProxyField>
         <div className="proxy-note">OpenAI 兼容格式的 API 地址</div>
 
         <ProxyField label="API 密钥">
-          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value })} />
+          <input className="proxy-input" type="password" placeholder="sk-..." value={config.apiKey} onChange={(e) => onUpdateConfig({ apiKey: e.target.value.trim() })} />
         </ProxyField>
-        <div className="proxy-note">大模型服务的 API 密钥</div>
+        <div className="proxy-note">大模型服务的 API 密钥{!config.apiKey.trim() ? ' (必填，用于 AI 自动回复)' : ''}</div>
 
         <div style={{ borderTop: '1px solid #2c3135', margin: '16px 0' }} />
         <h4 style={{ fontSize: 16, margin: '16px 0 20px', fontWeight: 700 }}>回复风格</h4>
@@ -890,9 +961,9 @@ export function AutoReplyPanel({
         <div className="proxy-note">AI 助手的身份角色，影响回复定位</div>
 
         <ProxyField label="系统提示词" className="proxy-field--top">
-          <textarea className="proxy-textarea" rows={4} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
+          <textarea className="proxy-textarea" rows={4} maxLength={2000} value={config.systemPrompt} onChange={(e) => onUpdateConfig({ systemPrompt: e.target.value })} />
         </ProxyField>
-        <div className="proxy-note">定义 AI 助手的角色和风格，规则自动追加</div>
+        <div className="proxy-note">定义 AI 助手的角色和风格，最多 2000 字 ({config.systemPrompt.length}/2000)</div>
 
         <ProxyField label="语气">
           <CustomSelect
@@ -1038,6 +1109,11 @@ export function AutoReplyPanel({
           </div>
         </ProxyField>
         <div className="proxy-note">越高话题越新（-2.0 ~ 2.0）</div>
+        {generateError && (
+          <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 4, background: '#2a1515', border: '1px solid #5c2a2a', fontSize: 12, color: '#e07a7a', lineHeight: 1.5 }}>
+            {generateError}
+          </div>
+        )}
       </>)}
       </div>
     </aside>

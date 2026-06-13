@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import type { WebviewRegistry } from '../webview-registry'
+import type { ChatMessagePayload } from '../../../src/shared/ipc-channels'
 import {
   appendChatMessage,
   getChatHistory,
@@ -13,14 +14,19 @@ import { syncData } from '../cloud-sync'
 export function registerChatIpc(registry: WebviewRegistry): void {
   ipcMain.handle('chat:register', (event) => {
     const wcId = event.sender.id
+    const fromRegistry = registry.getPartition(wcId)
+    if (fromRegistry) {
+      console.log('[Main] chat:register from registry', fromRegistry, wcId)
+      return fromRegistry
+    }
     const prefs = (event.sender as any).getWebPreferences?.() || {}
     const partition = prefs.partition || ''
-    registry.register(partition, wcId)
-    console.log('[Main] chat:register', partition, wcId)
+    if (partition) registry.register(partition, wcId)
+    console.log('[Main] chat:register from prefs', partition, wcId)
     return partition
   })
 
-  ipcMain.on('chat:message', (event, payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => {
+  ipcMain.on('chat:message', (event, payload: ChatMessagePayload) => {
     const partition = registry.getPartition(event.sender.id) || payload.partition || ''
     const enriched = { ...payload, partition }
     appendChatMessage(partition, enriched)
@@ -69,7 +75,13 @@ export function registerChatIpc(registry: WebviewRegistry): void {
   })
 
   ipcMain.on('chat:stats', (event, payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number }> }) => {
-    const partition = registry.getPartition(event.sender.id) || payload.partition || ''
+    let partition = registry.getPartition(event.sender.id)
+    if (!partition) {
+      partition = payload.partition || ''
+    }
+    if (!partition) {
+      console.warn('[Main] chat:stats cannot resolve partition for sender:', event.sender.id, 'payload partition:', payload.partition)
+    }
     const enriched = { ...payload, partition }
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (mainWindow) {

@@ -4,6 +4,7 @@
 
 import type { ChatMessagePayload } from './adapter'
 import { defineAdapter } from './adapter'
+import { fetchAvatarBase64 } from './avatar-cache'
 
 export type { ChatMessagePayload } from './adapter'
 
@@ -13,6 +14,8 @@ export const wechatAdapter = defineAdapter({
   name: 'wechat' as const,
 
   chatItemSelector: '.chat_item' as const,
+
+  messageContainerSelector: '.chat_bd' as const,
 
   detect(): boolean {
     const h = window.location.hostname
@@ -113,12 +116,42 @@ export const wechatAdapter = defineAdapter({
     const name = avatarImg?.getAttribute('title') || '对方'
     const isSelf = el.classList.contains('me')
 
+    /* Detect group chat: three indicators, ordered by reliability */
+
+    // 1. Message-internal: group messages render a sender nickname span
+    let isGroupChat = false
+    if (!isSelf) {
+      const nicknameEl = el.querySelector('.nickname, .nickname_text, .group-member-name, [data-username]')
+      if (nicknameEl) {
+        isGroupChat = true
+      }
+    }
+
+    // 2. Title bar: group chats typically show group name / member count
+    if (!isGroupChat) {
+      const titleEl = document.querySelector('.header .title_name, .chat_title, .title_bar .title')
+      if (titleEl) {
+        const titleText = titleEl.textContent || ''
+        if (/群聊|群组|\([\d]+人\)/.test(titleText)) {
+          isGroupChat = true
+        }
+      }
+    }
+
+    // 3. Sidebar active item (fallback, may be stale)
+    if (!isGroupChat) {
+      const activeItem = document.querySelector('.chat_item.active')
+      const activeUsername = activeItem?.getAttribute('data-username') || ''
+      isGroupChat = activeUsername.startsWith('@@')
+    }
+
     return {
       partition,
       sender: isSelf ? '我' : name,
       content: text,
       isFromUser: !isSelf,
       timestamp: Date.now(),
+      isGroup: isGroupChat,
     }
   },
 
@@ -303,21 +336,13 @@ export const wechatAdapter = defineAdapter({
         console.log('[ChatStats] unread:', name, unread, angularFound ? 'angular' : 'dom')
       }
 
-      // Convert avatar URL to base64 data URL using webview session cookies
+      // Convert avatar URL to base64 (LRU-cached to avoid redundant fetches)
       let avatar = ''
       if (avatarUrl && !avatarUrl.startsWith('data:')) {
         try {
-          const res = await fetch(avatarUrl)
-          if (res.ok) {
-            const blob = await res.blob()
-            avatar = await new Promise<string>((resolve) => {
-              const reader = new FileReader()
-              reader.onloadend = () => resolve(reader.result as string)
-              reader.readAsDataURL(blob)
-            })
-          }
+          avatar = await fetchAvatarBase64(avatarUrl)
         } catch (e) {
-          console.log('[ChatStats] avatar fetch failed for', name, e)
+          console.error('[ChatStats] avatar fetch failed for', name, e)
         }
       } else {
         avatar = avatarUrl

@@ -52,7 +52,7 @@ interface Window {
     setCloudSync: (url: string, apiKey: string, enabled: boolean) => Promise<boolean>
     onScheduledSend: (callback: (payload: { partition: string; content: string; autoSend: boolean }) => void) => () => void
     onChatMessage: (
-      callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number }) => void
+      callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number; isGroup?: boolean }) => void
     ) => () => void
     onChatStats: (
       callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
@@ -69,7 +69,7 @@ interface Window {
 
 declare namespace JSX {
   interface IntrinsicElements {
-    webview: React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+    webview: Omit<React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>, 'preload'> & {
       src?: string
       partition?: string
       allowpopups?: string

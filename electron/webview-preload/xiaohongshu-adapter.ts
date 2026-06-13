@@ -24,6 +24,8 @@ export const xiaohongshuAdapter = defineAdapter({
 
   chatItemSelector: '.sx-contact-item' as const,
 
+  messageContainerSelector: '.vue-recycle-scroller' as const,
+
   onPageReady(): void {
     // 页面加载后自动切换到“全部会话”，确保获取完整联系人列表；
     // 再尝试一次，以防首次加载时 tab 还没渲染
@@ -130,6 +132,7 @@ export const xiaohongshuAdapter = defineAdapter({
       content,
       isFromUser,
       timestamp: Date.now(),
+      isGroup: false,
     }
   },
 

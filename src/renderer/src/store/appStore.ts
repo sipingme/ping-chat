@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { ChatSession, ChatMessage } from '../types'
 
+const MAX_MESSAGES_PER_PARTITION = 500
+
 export interface ChatStats {
   partition: string
   totalCount: number
@@ -70,8 +72,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendChatMessage: (partition, message) =>
     set((state) => {
       const prev = state.chatMessagesMap[partition] ?? []
+      const next = [...prev, message]
+      if (next.length > MAX_MESSAGES_PER_PARTITION) {
+        next.splice(0, next.length - MAX_MESSAGES_PER_PARTITION)
+      }
       return {
-        chatMessagesMap: { ...state.chatMessagesMap, [partition]: [...prev, message] },
+        chatMessagesMap: { ...state.chatMessagesMap, [partition]: next },
       }
     }),
 

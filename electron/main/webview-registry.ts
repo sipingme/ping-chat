@@ -9,8 +9,13 @@ export class WebviewRegistry {
   private partitionMap = new Map<number, string>() // webContentsId -> partition
 
   register(partition: string, webContentsId: number): void {
-    this.registry.set(partition, webContentsId)
-    this.partitionMap.set(webContentsId, partition)
+    if (partition) {
+      this.registry.set(partition, webContentsId)
+    }
+    const existing = this.partitionMap.get(webContentsId)
+    if (!existing) {
+      this.partitionMap.set(webContentsId, partition)
+    }
     const wc = webContents.fromId(webContentsId)
     if (wc && !wc.isDestroyed()) {
       wc.once('destroyed', () => {
