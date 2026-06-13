@@ -88,11 +88,20 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
   const handleQueuedMessage = async (message: ChatMessage): Promise<void> => {
     if (isHandlingRef.current) return
     isHandlingRef.current = true
+    const messageKey = `${message.partition}:${message.sender}:${message.content}:${message.timestamp}`
     try {
       const config = configRef.current
       if (!config?.apiKey) return
 
-      await window.pingChat.selectChat(message.partition, message.sender)
+      try {
+        await window.pingChat.selectChat(message.partition, message.sender)
+      } catch (selectErr) {
+        console.error('[AutoReply] selectChat failed, re-queuing message:', selectErr)
+        // Re-queue: push back to front so it gets retried
+        pendingQueueRef.current.unshift(message)
+        processedKeysRef.current.delete(messageKey)
+        return
+      }
       await new Promise((resolve) => setTimeout(resolve, 500))
 
       if (message.isGroup) {
@@ -100,7 +109,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         return
       }
 
-      // Double-check via chat stats (more reliable than scraper's active-chat DOM detection)
+      // Double-check via chat stats
       const stats = getChatStats(message.partition)
       const contact = stats?.contacts?.find((c: any) => c.name === message.sender)
       if (contact?.isGroup) {
@@ -116,7 +125,11 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         pluginManager.loadRules(config.pluginRules)
         const pluginReply = pluginManager.onMessage({ sender: message.sender, content: message.content, isFromUser: message.isFromUser })
         if (pluginReply) {
-          await window.pingChat.sendReply(message.partition, pluginReply, config.autoSend)
+          try {
+            await window.pingChat.sendReply(message.partition, pluginReply, config.autoSend)
+          } catch (e) {
+            console.error('[AutoReply] plugin sendReply failed:', e)
+          }
           return
         }
       }
@@ -128,14 +141,22 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
           platform: message.partition.split(':')[1]?.split('-')[0] || 'unknown',
         })
         if (cmdResult.handled && cmdResult.reply) {
-          await window.pingChat.sendReply(message.partition, cmdResult.reply, config.autoSend)
+          try {
+            await window.pingChat.sendReply(message.partition, cmdResult.reply, config.autoSend)
+          } catch (e) {
+            console.error('[AutoReply] command sendReply failed:', e)
+          }
           return
         }
       }
 
       if (config.keywords.length > 0 && config.keywords.some((k) => message.content.includes(k))) {
         const keywordReply = interpolateTemplateVars(config.keywordResponse, { contactName: message.sender, partition: message.partition })
-        await window.pingChat.sendReply(message.partition, keywordReply, config.autoSend)
+        try {
+          await window.pingChat.sendReply(message.partition, keywordReply, config.autoSend)
+        } catch (e) {
+          console.error('[AutoReply] keyword sendReply failed:', e)
+        }
         window.pingChat.logReply({
           timestamp: Date.now(),
           partition: message.partition,
@@ -152,7 +173,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         return
       }
 
-      const history = messagesRef.current.filter((m) => m.partition === message.partition)
+      const history = messagesRef.current.filter((m) => m.partition === message.partition && !m.isGroup)
       const msgs = buildMessages(history, config)
 
       try {
@@ -160,7 +181,11 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         if (reply) {
           if (config.autoSend) {
             const interpolatedReply = interpolateTemplateVars(reply, { contactName: message.sender, partition: message.partition })
-            await window.pingChat.sendReply(message.partition, interpolatedReply, config.autoSend)
+            try {
+              await window.pingChat.sendReply(message.partition, interpolatedReply, config.autoSend)
+            } catch (e) {
+              console.error('[AutoReply] AI sendReply failed:', e)
+            }
             window.pingChat.logReply({
               timestamp: Date.now(),
               partition: message.partition,
@@ -258,7 +283,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
     }
     if (!message.isFromUser) return
 
-    const key = `${message.partition}:${message.sender}:${message.content}`
+    const key = `${message.partition}:${message.sender}:${message.content}:${message.timestamp}`
     if (processedKeysRef.current.has(key)) return
 
     if (message.isGroup) {
@@ -285,17 +310,43 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
   const pollUnreadContacts = useCallback(async (): Promise<void> => {
     if (!enabledRef.current || modeRef.current !== 'global' || isPollingRef.current) return
     isPollingRef.current = true
-    setAutoReplyGlobalGenerating(true)
     setAutoReplyGlobalError(null)
     try {
       for (const session of sessionsRef.current) {
         if (!session.partition) continue
+
+        // Collect contacts to process: from stats (unread > 0) and from message store (unreplied user messages)
+        const contactsToProcess: Array<{ name: string; isGroup: boolean }> = []
         const stats = getChatStats(session.partition)
-        if (!stats?.unreadContacts?.length) continue
-        const unreadUsers = stats.unreadContacts
-          .filter((c: any) => !c.isGroup && c.unread > 0)
-          .sort((a: any, b: any) => b.unread - a.unread)
-        for (const contact of unreadUsers) {
+        if (stats?.unreadContacts?.length) {
+          for (const c of stats.unreadContacts) {
+            if (!c.isGroup && c.unread > 0 && !contactsToProcess.some((p) => p.name === c.name)) {
+              contactsToProcess.push(c)
+            }
+          }
+        }
+
+        // Fallback: also check message store for unreplied user messages (catches the case
+        // where single mode already sent a reply, clearing the webview unread count)
+        const msgs = getChatMessages(session.partition) || []
+        const unrepliedSenders = new Set<string>()
+        let lastUserMsgIndex = -1
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (!msgs[i].isFromUser) break // last reply from us
+          if (msgs[i].isFromUser && !msgs[i].isGroup) {
+            lastUserMsgIndex = i
+            unrepliedSenders.add(msgs[i].sender)
+          }
+        }
+        for (const sender of unrepliedSenders) {
+          if (!contactsToProcess.some((p) => p.name === sender)) {
+            contactsToProcess.push({ name: sender, isGroup: false })
+          }
+        }
+
+        if (contactsToProcess.length === 0) continue
+
+        for (const contact of contactsToProcess) {
           if (!enabledRef.current || modeRef.current !== 'global') break
           const key = `${session.partition}:${contact.name}`
           if (processedContactsRef.current.has(key)) continue
@@ -305,7 +356,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
           const userMsgs = msgs.filter((m: ChatMessage) => m.sender === contact.name && m.isFromUser)
           const lastMsg = userMsgs[userMsgs.length - 1]
           if (!lastMsg) continue
-          const msgKey = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}`
+          const msgKey = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}:${lastMsg.timestamp}`
           if (processedKeysRef.current.has(msgKey)) continue
           processedKeysRef.current.add(msgKey)
           processedContactsRef.current.add(key)
@@ -328,10 +379,13 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
             })
           }
           try {
+            setAutoReplyGlobalGenerating(true)
             await handleQueuedMessage(lastMsg)
           } catch (e: any) {
             console.error('[AutoReply] global mode error:', e)
             setAutoReplyGlobalError(e?.message || '自动回复处理失败')
+          } finally {
+            setAutoReplyGlobalGenerating(false)
           }
           processedContactsRef.current.delete(key)
           await new Promise((r) => setTimeout(r, 1000))
@@ -367,17 +421,26 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
 
   useEffect(() => {
     if (!autoReplyEnabled || autoReplyMode !== 'global') {
+      isPollingRef.current = false
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null
       }
       return
     }
+    // Reset enqueue index so messages that arrived during single mode get re-processed
+    lastEnqueuedIndexRef.current = -1
+    const start = lastEnqueuedIndexRef.current + 1
+    for (let i = start; i < autoReplyMessages.length; i++) {
+      enqueueAutoReplyMessage(autoReplyMessages[i])
+    }
+    lastEnqueuedIndexRef.current = autoReplyMessages.length - 1
     void pollUnreadContacts()
     pollTimerRef.current = setInterval(() => {
       void pollUnreadContacts()
     }, 3000)
     return () => {
+      isPollingRef.current = false
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null

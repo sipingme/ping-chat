@@ -64,12 +64,14 @@ export function AutoReplyPanel({
   const [autoReplyGenerating, setAutoReplyGenerating] = useState(false)
   const [singleModeCountdown, setSingleModeCountdown] = useState<number | null>(null)
   const [generatingReply, setGeneratingReply] = useState(false)
+  const [sendingReply, setSendingReply] = useState(false)
   const [workbenchPrompt, setWorkbenchPrompt] = useState('')
   const [workbenchError, setWorkbenchError] = useState('')
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const autoReplyCooloffRef = useRef(false)
 
   const storeChatStats = useAppStore((state) => session ? state.chatStatsMap[session.partition] : undefined)
   const chatStats = storeChatStats ?? chatStatsProp
@@ -231,11 +233,13 @@ export function AutoReplyPanel({
         countdownTimerRef.current = null
       }
       setSingleModeCountdown(null)
+      autoReplyCooloffRef.current = false
       return
     }
     if (!enabled || autoReplyMode !== 'single' || !autoReplyTarget || !session) return
-    if (isAutoSendingRef.current || workbenchGenerating || generatingReply) return
+    if (isAutoSendingRef.current || workbenchGenerating) return
     if (autoReplyTimerRef.current || countdownTimerRef.current) return
+    if (autoReplyCooloffRef.current) return
 
     const doGenerate = (): void => {
       autoReplyTimerRef.current = setTimeout(() => {
@@ -261,9 +265,14 @@ export function AutoReplyPanel({
             }
             setGeneratedReply(reply)
             if (config.autoSend) {
+              setGeneratingReply(false)
+              setSendingReply(true)
               console.log('[AutoReply] sending reply')
               onSendReply(session.partition, reply, config.autoSend)
               setGeneratedReply('')
+              setSendingReply(false)
+              autoReplyCooloffRef.current = true
+              setTimeout(() => { autoReplyCooloffRef.current = false }, 2000)
             } else {
               console.log('[AutoReply] autoSend is false, filling generated reply')
             }
@@ -271,6 +280,7 @@ export function AutoReplyPanel({
             isAutoSendingRef.current = false
             setAutoReplyGenerating(false)
             setGeneratingReply(false)
+            setSendingReply(false)
           }
         })()
       }, 200)
@@ -295,7 +305,26 @@ export function AutoReplyPanel({
     } else {
       doGenerate()
     }
-  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSend, onSendReply, workbenchGenerating, generatingReply])
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingConversation.length, enabled, autoReplyMode, autoReplyTarget, session, config.delaySeconds, config.autoSend, onSendReply, workbenchGenerating])
+
+  // Cleanup timers on unmount/dep change to prevent orphaned intervals in Strict Mode
+  const timersRefForCleanup = useRef({ countdownTimerRef, autoReplyTimerRef })
+  timersRefForCleanup.current = { countdownTimerRef, autoReplyTimerRef }
+  useEffect(() => {
+    return () => {
+      const t = timersRefForCleanup.current
+      if (t.countdownTimerRef.current) {
+        clearInterval(t.countdownTimerRef.current)
+        t.countdownTimerRef.current = null
+      }
+      if (t.autoReplyTimerRef.current) {
+        clearTimeout(t.autoReplyTimerRef.current)
+        t.autoReplyTimerRef.current = null
+      }
+    }
+  }, [])
 
   useLayoutEffect(() => {
     const activeBtn = tabsRef.current?.querySelector('.proxy-tabs button.active')
@@ -650,13 +679,13 @@ export function AutoReplyPanel({
             )}
 
             {replyCountdown !== null && replyCountdown > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1f262b', border: '1px solid #3a4147' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#151719', border: '1px solid #33373d' }}>
                 <Clock size={12} style={{ color: '#8c96a1' }} />
                 <span style={{ fontSize: 12, color: '#8c96a1' }}>延迟回复倒计时: <strong style={{ color: '#f3f5f7' }}>{replyCountdown} 秒</strong></span>
               </div>
             )}
             {singleModeCountdown !== null && singleModeCountdown > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1f262b', border: '1px solid #3a4147' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#151719', border: '1px solid #33373d' }}>
                 <Clock size={12} style={{ color: '#8c96a1' }} />
                 <span style={{ fontSize: 12, color: '#8c96a1' }}>延迟回复倒计时: <strong style={{ color: '#f3f5f7' }}>{singleModeCountdown} 秒</strong></span>
               </div>
@@ -668,6 +697,12 @@ export function AutoReplyPanel({
                 <span style={{ fontSize: 12, color: '#19d973' }}>正在生成回复…</span>
               </div>
             )}
+            {sendingReply && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 10px', borderRadius: 4, background: '#1a2a1a', border: '1px solid #04c768' }}>
+                <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', color: '#04c768' }} />
+                <span style={{ fontSize: 12, color: '#04c768' }}>正在发送…</span>
+              </div>
+            )}
 
             {/* 生成回复按钮 */}
             <div style={{ display: 'flex', gap: 8 }}>
@@ -675,7 +710,7 @@ export function AutoReplyPanel({
                 className="apply-action"
                 style={{ flex: 1, height: 32, fontSize: 12, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
                 onClick={() => handleWorkbenchGenerate(workbenchTarget)}
-                disabled={workbenchGenerating || autoReplyGenerating}
+                disabled={workbenchGenerating || autoReplyGenerating || sendingReply}
               >
                 {workbenchGenerating || autoReplyGenerating || globalGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
                 {workbenchGenerating || autoReplyGenerating ? '生成中…' : globalGenerating ? '处理中…' : '生成回复'}

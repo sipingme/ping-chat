@@ -161,7 +161,7 @@ export const wechatAdapter = defineAdapter({
     msgEls.forEach((el) => {
       const msg = this.parseMessageElement(el, partition)
       if (msg) {
-        const key = `${msg.sender}:${msg.content}`
+        const key = `${msg.sender}:${msg.content}:${msg.timestamp}`
         if (seen.has(key)) return
         seen.add(key)
         msgs.push(msg)
@@ -186,7 +186,7 @@ export const wechatAdapter = defineAdapter({
       for (const el of items) {
         const msg = this.parseMessageElement(el, partition)
         if (msg) {
-          const key = `${msg.sender}:${msg.content}`
+          const key = `${msg.sender}:${msg.content}:${msg.timestamp}`
           if (seen.has(key)) continue
           if (localSeen.has(key)) continue
           seen.add(key)
