@@ -122,17 +122,17 @@ describe('wechatAdapter', () => {
       expect(msgs[1].content).toBe('M2')
     })
 
-    it('deduplicates using global seen set', () => {
+    it('deduplicates same element across calls', () => {
       const el = document.createElement('div')
       el.className = 'message'
       el.innerHTML = '<img class="avatar" title="A" /><div class="js_message_plain">Dup</div>'
       document.body.appendChild(el)
-      const clone = el.cloneNode(true) as HTMLElement
-      document.body.appendChild(clone)
-      const msgs = wechatAdapter.extractMessagesFromNodes('p1', [el, clone])
+      const msgs1 = wechatAdapter.extractMessagesFromNodes('p1', [el])
+      expect(msgs1.length).toBe(1)
+      // Second call with same element → skipped
+      const msgs2 = wechatAdapter.extractMessagesFromNodes('p1', [el])
+      expect(msgs2.length).toBe(0)
       document.body.removeChild(el)
-      document.body.removeChild(clone)
-      expect(msgs.length).toBe(1)
     })
   })
 })

@@ -8,7 +8,7 @@ import { fetchAvatarBase64 } from './avatar-cache'
 
 export type { ChatMessagePayload } from './adapter'
 
-const seen = new Set<string>()
+const processedElements = new WeakSet<Element>()
 
 export const wechatAdapter = defineAdapter({
   name: 'wechat' as const,
@@ -101,6 +101,20 @@ export const wechatAdapter = defineAdapter({
   },
 
   parseMessageElement(el: Element, partition: string): ChatMessagePayload | null {
+    const htmlEl = el as HTMLElement
+
+    // Return cached result if this element was already parsed
+    if (htmlEl.dataset.pingTs) {
+      return {
+        partition,
+        sender: htmlEl.dataset.pingSender || '',
+        content: htmlEl.dataset.pingContent || '',
+        isFromUser: !el.classList.contains('me'),
+        timestamp: Number(htmlEl.dataset.pingTs),
+        isGroup: htmlEl.dataset.pingIsGroup === 'true',
+      }
+    }
+
     if (el.classList.contains('message_system')) return null
 
     let text = (el.querySelector('.js_message_plain') as HTMLElement | null)?.textContent?.trim()
@@ -145,12 +159,20 @@ export const wechatAdapter = defineAdapter({
       isGroupChat = activeUsername.startsWith('@@')
     }
 
+    const ts = Date.now()
+
+    // Cache result on the DOM element so re-parsing yields the same payload
+    htmlEl.dataset.pingTs = String(ts)
+    htmlEl.dataset.pingSender = isSelf ? '我' : name
+    htmlEl.dataset.pingContent = text
+    htmlEl.dataset.pingIsGroup = String(isGroupChat)
+
     return {
       partition,
       sender: isSelf ? '我' : name,
       content: text,
       isFromUser: !isSelf,
-      timestamp: Date.now(),
+      timestamp: ts,
       isGroup: isGroupChat,
     }
   },
@@ -159,11 +181,10 @@ export const wechatAdapter = defineAdapter({
     const msgs: ChatMessagePayload[] = []
     const msgEls = document.querySelectorAll('.message')
     msgEls.forEach((el) => {
+      if (processedElements.has(el)) return
       const msg = this.parseMessageElement(el, partition)
       if (msg) {
-        const key = `${msg.sender}:${msg.content}:${msg.timestamp}`
-        if (seen.has(key)) return
-        seen.add(key)
+        processedElements.add(el)
         msgs.push(msg)
       }
     })
@@ -172,7 +193,6 @@ export const wechatAdapter = defineAdapter({
 
   extractMessagesFromNodes(partition: string, nodes: Node[]): ChatMessagePayload[] {
     const msgs: ChatMessagePayload[] = []
-    const localSeen = new Set<string>()
 
     for (const node of nodes) {
       if (!(node instanceof HTMLElement)) continue
@@ -184,33 +204,71 @@ export const wechatAdapter = defineAdapter({
         items.push(...Array.from(node.querySelectorAll('.message')))
       }
       for (const el of items) {
+        if (processedElements.has(el)) continue
         const msg = this.parseMessageElement(el, partition)
         if (msg) {
-          const key = `${msg.sender}:${msg.content}:${msg.timestamp}`
-          if (seen.has(key)) continue
-          if (localSeen.has(key)) continue
-          seen.add(key)
-          localSeen.add(key)
+          processedElements.add(el)
           msgs.push(msg)
         }
       }
     }
 
-    if (msgs.length > 0) {
-      console.log('[WeChat] extractMessagesFromNodes: found', msgs.length, 'new msg(s) from', nodes.length, 'added node(s)')
+    // Second defense: dedup by sender+content within 2s (WeChat may re-render into a new DOM element)
+    const deduped: ChatMessagePayload[] = []
+    const seen = new Map<string, number>() // sender:content -> last timestamp
+    for (const msg of msgs) {
+      const key = `${msg.sender}:${msg.content}`
+      const lastTs = seen.get(key)
+      if (lastTs && Math.abs(msg.timestamp - lastTs) < 2000) {
+        console.log('%c[WeChat]', 'color: #2196f3; font-weight: bold', 'deduping re-rendered msg:', msg.sender, msg.content.slice(0, 30))
+        continue
+      }
+      seen.set(key, msg.timestamp)
+      deduped.push(msg)
     }
-    return msgs
+
+    if (deduped.length > 0) {
+      // Infer current chat type from sidebar active item
+      const activeItem = document.querySelector('.chat_item.active')
+      const activeUsername = activeItem?.getAttribute('data-username') || ''
+      const chatType = activeUsername.startsWith('@@') ? 'group' : activeUsername.startsWith('@') ? 'user' : 'official/other'
+
+      const msgDetails = deduped.map((m) => {
+        const dir = m.isFromUser ? 'them' : 'self'
+        const type = m.isGroup ? 'group' : chatType
+        return `${m.sender}[${type},${dir}]="${m.content.slice(0, 30)}"`
+      }).join(' | ')
+      console.log(
+        '%c[WeChat]%c extractMessagesFromNodes: found %c' + deduped.length + '%c msg(s) from %c' + nodes.length + '%c node(s) → %c' + msgDetails,
+        'color: #2196f3; font-weight: bold',
+        'color: #888',
+        'color: #4caf50; font-weight: bold',
+        'color: #888',
+        'color: #ff9800; font-weight: bold',
+        'color: #888',
+        'color: #ddd'
+      )
+    }
+    return deduped
   },
 
   extractAllMessages(partition: string): ChatMessagePayload[] {
     const msgs: ChatMessagePayload[] = []
     const msgEls = document.querySelectorAll('.message')
-    msgEls.forEach((el, i) => {
+    const seenTs = new Set<number>() // dedup by exact timestamp (DOM cache ensures same ts for same element)
+    msgEls.forEach((el) => {
       const msg = this.parseMessageElement(el, partition)
       if (msg) {
-        if (i < 3) console.log('[ChatStats] msg', i, 'sender:', msg.sender, 'isSelf:', !msg.isFromUser, 'text:', msg.content.slice(0, 30))
+        if (seenTs.has(msg.timestamp)) {
+          console.log('[ChatStats] skipping re-scanned DOM element in extractAllMessages:', msg.sender, msg.content.slice(0, 30))
+          return
+        }
+        seenTs.add(msg.timestamp)
         msgs.push(msg)
       }
+    })
+    msgs.forEach((msg, i) => {
+      console.log('[ChatStats] msg', i, 'sender:', msg.sender, 'isSelf:', !msg.isFromUser, 'text:', msg.content.slice(0, 30))
     })
     console.log('[ChatStats] extractAllMessages returning', msgs.length, 'messages')
     return msgs
@@ -218,15 +276,28 @@ export const wechatAdapter = defineAdapter({
 
   async extractChatListStats(partition: string) {
     const items = document.querySelectorAll('.chat_item')
-    console.log('[ChatStats] found', items.length, 'chat items')
+    console.log('[ChatStats] found', items.length, 'chat items:')
+    items.forEach((el, i) => {
+      const username = el.getAttribute('data-username') || ''
+      const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
+      const name = nameEl?.innerText?.trim() || username
+      if (name === '文件传输助手' || name === 'File Transfer') return
+      const isGroup = username.startsWith('@@')
+      const isUser = username.startsWith('@') && !isGroup
+      const typeLabel = isGroup ? '(group)' : isUser ? '(user)' : '(official/other)'
+      const color = isGroup ? '#9c27b0' : isUser ? '#4caf50' : '#ff9800'
+      console.log(`%c  [${i}]`, `color: ${color}; font-weight: bold`, name, typeLabel, 'username=' + username, 'prefix=' + username.slice(0, 2))
+    })
     let groupCount = 0
     let totalUnread = 0
     const contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
     const unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
+    const groups: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> = []
 
     for (const el of Array.from(items)) {
       const username = el.getAttribute('data-username') || ''
       const isGroup = username.startsWith('@@')
+      const isUser = username.startsWith('@') && !isGroup
 
       const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
       const name = nameEl?.innerText?.trim() || username
@@ -239,8 +310,26 @@ export const wechatAdapter = defineAdapter({
 
       if (name === '文件传输助手' || name === 'File Transfer') continue
 
+      // Skip official accounts and other non-user/non-group contacts
+      if (!isGroup && !isUser) {
+        console.log('%c[ChatStats]', 'color: #ff9800; font-weight: bold', 'skipping non-user/non-group contact:', name, 'username=' + username, 'prefix=' + username.slice(0, 2))
+        continue
+      }
+
       if (isGroup) {
         groupCount++
+        let groupAvatar = ''
+        if (avatarUrl && !avatarUrl.startsWith('data:')) {
+          try {
+            groupAvatar = await fetchAvatarBase64(avatarUrl)
+          } catch (e) {
+            console.error('[ChatStats] group avatar fetch failed for', name, e)
+          }
+        } else {
+          groupAvatar = avatarUrl
+        }
+        groups.push({ name, isGroup, unread: 0, avatar: groupAvatar })
+        continue
       }
 
       // Try Angular scope for unread count
@@ -351,21 +440,20 @@ export const wechatAdapter = defineAdapter({
       contacts.push({ name, isGroup, unread, avatar })
 
       if (unread > 0) {
-        if (!isGroup) {
-          totalUnread += unread
-        }
+        totalUnread += unread
         unreadContacts.push({ name, isGroup, unread, avatar })
       }
     }
 
     return {
       partition,
-      totalCount: contacts.length,
+      totalCount: contacts.length + groupCount,
       groupCount,
-      userCount: contacts.length - groupCount,
+      userCount: contacts.length,
       totalUnread,
       contacts,
       unreadContacts,
+      groups,
     }
   },
 

@@ -55,7 +55,7 @@ interface Window {
       callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number; isGroup?: boolean }) => void
     ) => () => void
     onChatStats: (
-      callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
+      callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; groups: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
     ) => () => void
     onChatRecall: (callback: (payload: { partition: string; sender: string; content: string; originalContent: string; timestamp: number }) => void) => () => void
     onContactClicked: (

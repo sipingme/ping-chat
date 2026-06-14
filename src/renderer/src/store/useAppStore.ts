@@ -24,7 +24,7 @@ interface AppState {
   setActiveRightTool: (tool: string) => void
 
   // Stats
-  chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
+  chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; groups: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
   setChatStats: (stats: AppState['chatStats']) => void
 
   // Recalls

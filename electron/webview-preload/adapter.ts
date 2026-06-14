@@ -27,6 +27,7 @@ export interface ChatStats {
   totalUnread: number
   contacts: ChatContact[]
   unreadContacts: ChatContact[]
+  groups: ChatContact[]
 }
 
 export interface PlatformAdapter {
@@ -39,7 +40,7 @@ export interface PlatformAdapter {
   /** 根据当前页面 hostname 判断是否匹配本平台 */
   detect(): boolean
   /** 从聊天列表项 DOM 元素中提取联系人信息 */
-  extractContactFromElement(el: Element): { name: string; avatarUrl: string } | null
+  extractContactFromElement(el: Element): { name: string; avatarUrl: string; lastMessage?: string; time?: string; isUnread?: boolean; isOverdue?: boolean; userId?: string; tags?: string[] } | null
   /** 按联系人名称选中会话 */
   selectChat(contactName: string): boolean | Promise<boolean>
   /** 提取当前会话的新消息 */

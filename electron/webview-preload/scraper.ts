@@ -13,11 +13,11 @@ export function startAutoReplyScraper(partition: string): void {
       console.log('[ChatStats] no platform adapter matched for', window.location.hostname)
       return
     }
-    console.log('[ChatStats] using adapter:', adapter.name)
+    console.log('%c[ChatStats]', 'color: #2196f3; font-weight: bold', 'using adapter:', adapter.name)
 
     monitoringEnabled = true
     void adapter.extractChatListStats(partition).then((stats: any) => {
-      console.log('[ChatStats] initial scan', stats)
+      console.log('%c[ChatStats]', 'color: #2196f3; font-weight: bold', 'initial scan', stats)
       if (stats) {
         ipcRenderer.send('chat:stats', stats)
       }
@@ -86,7 +86,7 @@ export function startAutoReplyScraper(partition: string): void {
         return
       }
       if (!e.isTrusted) {
-        console.log('[ChatStats] ignored non-trusted click for', e.target)
+        console.debug('[ChatStats] ignored non-trusted click for', e.target)
         return
       }
       const target = e.target as HTMLElement
@@ -183,8 +183,15 @@ export function startAutoReplyScraper(partition: string): void {
         newMsgs = adapter.extractMessages(partition)
       }
       newMsgs.forEach((m) => {
+        const cacheKey = getCacheKey(m.sender, m.content)
+        const cached = messageCache.get(cacheKey)
+        // WeChat may re-render the same message into a new DOM element; skip duplicates within 2s
+        if (cached && Math.abs(m.timestamp - cached.timestamp) < 2000) {
+          console.log('%c[Scraper]', 'color: #ff9800; font-weight: bold', 'skipping duplicate message within 2s:', m.sender, m.content.slice(0, 30))
+          return
+        }
         ipcRenderer.send('chat:message', m)
-        messageCache.set(getCacheKey(m.sender, m.content), { sender: m.sender, content: m.content, timestamp: m.timestamp })
+        messageCache.set(cacheKey, { sender: m.sender, content: m.content, timestamp: m.timestamp })
       })
 
       for (const mut of mutations) {
@@ -225,6 +232,6 @@ export function startAutoReplyScraper(partition: string): void {
       }
     })
   } catch (e) {
-    console.error('[AutoReply] scraper init error:', e)
+    console.error('%c[AutoReply]', 'color: #f44336; font-weight: bold', 'scraper init error:', e)
   }
 }

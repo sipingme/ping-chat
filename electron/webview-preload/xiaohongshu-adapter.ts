@@ -293,6 +293,7 @@ export const xiaohongshuAdapter = defineAdapter({
       totalUnread,
       contacts,
       unreadContacts,
+      groups: [],
     }
   },
 

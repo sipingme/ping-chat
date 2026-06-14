@@ -202,12 +202,12 @@ export function MonitorPanel({ session, monitoringEnabled, onToggleMonitoring, c
       )}
       {monitoringEnabled && isWechat && showGroupList && (
         <div style={{ marginBottom: 12, maxHeight: 300, overflow: 'auto' }}>
-          {(chatStats?.contacts ?? []).filter((c: any) => c.isGroup).length === 0 ? (
+          {(chatStats?.groups ?? []).length === 0 ? (
             <div style={{ padding: '16px 12px', borderRadius: 4, background: '#1a1f23', border: '1px dashed #3a4147', textAlign: 'center' }}>
-              <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无群聊数据，请确保微信已正常登录</span>
+              <span style={{ fontSize: 12, color: '#8c96a1' }}>暂无群聊数据</span>
             </div>
           ) : (
-            (chatStats?.contacts ?? []).filter((c: any) => c.isGroup).map((c: any, i: number) => (
+            (chatStats?.groups ?? []).map((c: any, i: number) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 4, background: '#252a2e', border: '1px solid #2c3135', marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {c.avatar ? <img src={c.avatar} alt="" style={{ width: 22, height: 22, borderRadius: 2, objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 22, height: 22, borderRadius: 2, background: '#3a4147', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#8c96a1' }}>{c.name.charAt(0)}</div>}

@@ -11,6 +11,7 @@ export interface ChatStats {
   totalUnread: number
   contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>
   unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>
+  groups: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>
 }
 
 interface AppState {

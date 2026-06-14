@@ -160,7 +160,37 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const unsub = window.pingChat.onChatMessage((payload) => {
-      setAutoReplyMessages((prev) => [...prev, payload])
+      // Gatekeeper: only accept messages from known contacts/groups
+      const stats = getChatStats(payload.partition)
+      if (stats) {
+        const knownContact = stats.contacts?.find((c: any) => c.name === payload.sender)
+        const knownGroup = stats.groups?.find((g: any) => g.name === payload.sender)
+        if (!knownContact && !knownGroup) {
+          console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'ignored unknown sender (official account?):', payload.sender,
+            'stats contacts=', stats.contacts?.map((c: any) => c.name),
+            'stats groups=', stats.groups?.map((g: any) => g.name))
+          return
+        }
+      } else {
+        console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'stats not ready, ignoring message from:', payload.sender)
+        return
+      }
+
+      setAutoReplyMessages((prev) => {
+        const exists = prev.some(
+          (m) =>
+            m.partition === payload.partition &&
+            m.sender === payload.sender &&
+            m.content === payload.content &&
+            m.timestamp === payload.timestamp
+        )
+        if (exists) {
+          console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'duplicate dropped:', payload.sender, payload.content.slice(0, 30))
+          return prev
+        }
+        console.log('%c[AutoReplyMessages]', 'color: #4caf50; font-weight: bold', 'added:', payload.sender, payload.content.slice(0, 30))
+        return [...prev, payload]
+      })
       appendChatMessage(payload.partition, payload)
     })
     return unsub
@@ -225,6 +255,7 @@ export function App(): JSX.Element {
     autoReplyEnabled,
     autoReplyMode,
     autoReplyTarget,
+    setAutoReplyTarget,
     sessions,
     autoReplyMessages,
     setAutoReplyMessages,

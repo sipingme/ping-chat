@@ -43,7 +43,7 @@ export function AutoReplyPanel({
   config: AutoReplyConfig
   onUpdateConfig: (updates: Partial<AutoReplyConfig>) => void
   onSendReply: (partition: string, content: string, autoSend?: boolean) => void
-  chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
+  chatStats: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; groups?: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> } | null
   autoReplyTarget: string
   setAutoReplyTarget: (v: string) => void
   autoReplyMode: 'global' | 'single'
@@ -107,15 +107,41 @@ export function AutoReplyPanel({
       if (!session) return
       if (payload.partition !== session.partition && payload.partition !== '') return
       if (payload.isGroup) return // 群聊消息不应出现在回复工作台
+
+      // Gatekeeper: only show messages from known contacts/groups (skip official accounts)
+      if (chatStatsProp) {
+        const knownContact = chatStatsProp.contacts?.find((c) => c.name === payload.sender)
+        const knownGroup = chatStatsProp.groups?.find((g) => g.name === payload.sender)
+        if (!knownContact && !knownGroup) {
+          console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'ignored unknown sender (official account?):', payload.sender,
+            'stats contacts=', chatStatsProp.contacts?.map((c) => c.name),
+            'stats groups=', chatStatsProp.groups?.map((g) => g.name))
+          return
+        }
+      } else {
+        console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'stats not ready, ignoring message from:', payload.sender)
+        return
+      }
+
       setChatHistory((prev) => {
-        if (prev.some((m) => m.sender === payload.sender && m.content === payload.content && m.timestamp === payload.timestamp)) {
+        // Exact dedup: same sender + content + timestamp (scraper already handles DOM re-render within 3s)
+        const exists = prev.some(
+          (m) =>
+            m.sender === payload.sender &&
+            m.content === payload.content &&
+            m.partition === payload.partition &&
+            m.timestamp === payload.timestamp
+        )
+        if (exists) {
+          console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'duplicate dropped:', payload.sender, payload.content.slice(0, 30))
           return prev
         }
+        console.log('%c[ReplyWorkbench]', 'color: #4caf50; font-weight: bold', 'added:', payload.sender, payload.content.slice(0, 30))
         return [...prev, payload]
       })
     })
     return unsub
-  }, [session?.partition])
+  }, [session?.partition, chatStatsProp])
 
   useEffect(() => {
     setReplyTarget('')
@@ -399,7 +425,25 @@ export function AutoReplyPanel({
   return (
     <aside className="translation-panel proxy-panel">
       <div className="translation-header">
-        <div className="translation-title">{enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginRight: 6 }} />}<span>自动回复</span><span style={{ fontSize: 11, color: '#19d973', marginLeft: 8, padding: '2px 8px', background: 'rgba(25, 217, 115, 0.12)', borderRadius: 4, border: '1px solid rgba(25, 217, 115, 0.35)', fontWeight: 600 }}>{autoReplyMode === 'global' ? '所有用户' : autoReplyTarget || '指定用户'}</span></div>
+        <div className="translation-title">
+          {enabled && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#19d973', marginRight: 6 }} />}
+          <span>自动回复</span>
+          <span style={{ fontSize: 11, marginLeft: 8, padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(25, 217, 115, 0.35)', fontWeight: 600,
+            color: globalGenerating ? '#f3f5f7' : '#19d973',
+            background: globalGenerating ? 'rgba(255, 152, 0, 0.15)' : 'rgba(25, 217, 115, 0.12)',
+            borderColor: globalGenerating ? 'rgba(255, 152, 0, 0.4)' : 'rgba(25, 217, 115, 0.35)'
+          }}>
+            {autoReplyMode === 'global'
+              ? (globalGenerating
+                  ? '正在生成…'
+                  : (replyCountdown !== null && replyCountdown > 0)
+                      ? `倒计时 ${replyCountdown}秒`
+                      : '所有用户')
+              : (singleModeCountdown !== null && singleModeCountdown > 0)
+                  ? `倒计时 ${singleModeCountdown}秒`
+                  : autoReplyTarget || '指定用户'}
+          </span>
+        </div>
         <button className="translation-menu" onClick={() => onClose?.()}><X size={14} /></button>
       </div>
 
