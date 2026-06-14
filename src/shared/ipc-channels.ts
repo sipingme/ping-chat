@@ -16,6 +16,7 @@ export interface ChatMessagePayload {
   isFromUser: boolean
   timestamp: number
   isGroup?: boolean
+  historical?: boolean
 }
 
 export interface ChatHistoryEntry {

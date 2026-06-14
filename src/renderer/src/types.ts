@@ -31,6 +31,8 @@ export type ChatMessage = {
   isFromUser: boolean
   timestamp: number
   isGroup?: boolean
+  /** True when scraped during chat switch / initial load — do not trigger auto-reply */
+  historical?: boolean
 }
 
 export type ProxyConfig = {

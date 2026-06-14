@@ -22,6 +22,14 @@ export const wechatAdapter = defineAdapter({
     return h.includes('wechat') || h.includes('wx2.qq.com')
   },
 
+  isLoginPage(): boolean {
+    // Already logged in: chat list exists
+    if (document.querySelectorAll('.chat_item').length > 0) return false
+    // Login page indicators (QR code, login box, etc.)
+    const loginSelectors = ['.login', '.qrcode', '.web_login', '#login_container', '.login_box', '.login-panel']
+    return loginSelectors.some((sel) => !!document.querySelector(sel))
+  },
+
   extractContactFromElement(el: Element): { name: string; avatarUrl: string } | null {
     const nameEl = el.querySelector('.nickname_text') as HTMLElement | null
     const name = nameEl?.textContent?.trim()

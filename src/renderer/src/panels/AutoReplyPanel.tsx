@@ -6,6 +6,7 @@ import { MonitorPanel } from '../components/MonitorPanel'
 import { useAppStore } from '../store/appStore'
 import { interpolateTemplateVars } from '../config/defaults'
 import { buildMessages, LLMService } from '../services/llmService'
+import { getConversationForLLM, getPendingUserMessages } from '../utils/conversationUtils'
 
 export function AutoReplyPanel({
   session,
@@ -67,7 +68,6 @@ export function AutoReplyPanel({
   const [sendingReply, setSendingReply] = useState(false)
   const [workbenchPrompt, setWorkbenchPrompt] = useState('')
   const [workbenchError, setWorkbenchError] = useState('')
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [contactAvatarMap, setContactAvatarMap] = useState<Record<string, string>>({})
   const tabsRef = useRef<HTMLDivElement>(null)
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -80,68 +80,6 @@ export function AutoReplyPanel({
 
   const llmServiceRef = useRef(new LLMService(config))
   llmServiceRef.current.updateConfig(config)
-
-  useEffect(() => {
-    const unsub = window.pingChat.onChatHistory((payload) => {
-      console.log('[Renderer] chat:history received', payload.history.length, 'msgs, partition:', payload.partition, 'session partition:', session?.partition)
-      if (!session || payload.partition === session.partition || !payload.partition) {
-        console.log('[Renderer] updating chatHistory with', payload.history.length, 'messages')
-        setChatHistory((prev) => {
-          const incoming = payload.history.map((m) => ({ ...m, partition: payload.partition }))
-          const incomingMaxTs = incoming.length > 0 ? Math.max(...incoming.map((m) => m.timestamp)) : 0
-          const realtimeMessages = prev.filter((m) => m.timestamp > incomingMaxTs)
-          const merged = [...incoming, ...realtimeMessages]
-          merged.sort((a, b) => a.timestamp - b.timestamp)
-          return merged
-        })
-      } else {
-        console.log('[Renderer] chat:history ignored, partition mismatch')
-      }
-    })
-    return unsub
-  }, [session?.partition])
-
-  useEffect(() => {
-    if (!window.pingChat.onChatMessage) return
-    const unsub = window.pingChat.onChatMessage((payload) => {
-      if (!session) return
-      if (payload.partition !== session.partition && payload.partition !== '') return
-      if (payload.isGroup) return // 群聊消息不应出现在回复工作台
-
-      // Gatekeeper: only show messages from known contacts/groups (skip official accounts)
-      if (chatStatsProp) {
-        const knownContact = chatStatsProp.contacts?.find((c) => c.name === payload.sender)
-        const knownGroup = chatStatsProp.groups?.find((g) => g.name === payload.sender)
-        if (!knownContact && !knownGroup) {
-          console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'ignored unknown sender (official account?):', payload.sender,
-            'stats contacts=', chatStatsProp.contacts?.map((c) => c.name),
-            'stats groups=', chatStatsProp.groups?.map((g) => g.name))
-          return
-        }
-      } else {
-        console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'stats not ready, ignoring message from:', payload.sender)
-        return
-      }
-
-      setChatHistory((prev) => {
-        // Exact dedup: same sender + content + timestamp (scraper already handles DOM re-render within 3s)
-        const exists = prev.some(
-          (m) =>
-            m.sender === payload.sender &&
-            m.content === payload.content &&
-            m.partition === payload.partition &&
-            m.timestamp === payload.timestamp
-        )
-        if (exists) {
-          console.log('%c[ReplyWorkbench]', 'color: #ff9800; font-weight: bold', 'duplicate dropped:', payload.sender, payload.content.slice(0, 30))
-          return prev
-        }
-        console.log('%c[ReplyWorkbench]', 'color: #4caf50; font-weight: bold', 'added:', payload.sender, payload.content.slice(0, 30))
-        return [...prev, payload]
-      })
-    })
-    return unsub
-  }, [session?.partition, chatStatsProp])
 
   useEffect(() => {
     setReplyTarget('')
@@ -185,6 +123,9 @@ export function AutoReplyPanel({
 
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
+  // Subscribe to the persistent message store (survives chat switches and holds ALL partitions)
+  const chatMessagesMap = useAppStore((s) => s.chatMessagesMap)
+
   const grouped = useMemo(() => {
     const map: Record<string, ChatMessage[]> = {}
     messages.forEach((m) => {
@@ -197,40 +138,17 @@ export function AutoReplyPanel({
 
   const workbenchTarget = useMemo(() => {
     if (autoReplyTarget) return autoReplyTarget
-    const lastUserMsg = [...chatHistory].reverse().find((m) => m.isFromUser)
+    if (!session) return ''
+    const allMsgs = chatMessagesMap[session.partition] ?? []
+    const lastUserMsg = [...allMsgs].reverse().find((m) => m.isFromUser)
     return lastUserMsg?.sender || ''
-  }, [autoReplyTarget, chatHistory])
+  }, [autoReplyTarget, chatMessagesMap, session])
 
   const pendingConversation = useMemo<ChatMessage[]>(() => {
-    if (!workbenchTarget || chatHistory.length === 0) return []
-    // Find index of my last reply
-    let myLastReplyIndex = -1
-    for (let i = chatHistory.length - 1; i >= 0; i--) {
-      if (!chatHistory[i].isFromUser) {
-        myLastReplyIndex = i
-        break
-      }
-    }
-    // Find last user message (chatHistory is from current chat window)
-    let lastUserMsgIndex = -1
-    for (let i = chatHistory.length - 1; i >= 0; i--) {
-      if (chatHistory[i].isFromUser) {
-        lastUserMsgIndex = i
-        break
-      }
-    }
-    // No pending messages if no user message or already replied
-    if (lastUserMsgIndex === -1 || lastUserMsgIndex <= myLastReplyIndex) return []
-    // Trace back to after my last reply
-    let startIndex = 0
-    for (let i = lastUserMsgIndex - 1; i >= 0; i--) {
-      if (!chatHistory[i].isFromUser) {
-        startIndex = i + 1
-        break
-      }
-    }
-    return chatHistory.slice(startIndex, lastUserMsgIndex + 1)
-  }, [chatHistory, workbenchTarget])
+    if (!workbenchTarget || !session) return []
+    const allMsgs = chatMessagesMap[session.partition] ?? []
+    return getPendingUserMessages(allMsgs, workbenchTarget)
+  }, [chatMessagesMap, workbenchTarget, session])
 
   const hadPendingRef = useRef(false)
   useEffect(() => {
@@ -284,7 +202,14 @@ export function AutoReplyPanel({
         void (async () => {
           try {
             console.log('[AutoReply] single mode generating for', autoReplyTarget, 'messages:', currentPending.length)
-            const reply = await handleWorkbenchGenerate(autoReplyTarget, currentPending)
+            const llmHistory = session
+              ? getConversationForLLM(
+                  chatMessagesMap[session.partition] ?? [],
+                  autoReplyTarget,
+                  session.partition
+                )
+              : currentPending
+            const reply = await handleWorkbenchGenerate(autoReplyTarget, llmHistory)
             if (!reply || !session) {
               console.log('[AutoReply] no reply, aborting')
               return
@@ -398,7 +323,11 @@ export function AutoReplyPanel({
     setWorkbenchGenerating(true)
     setWorkbenchError('')
     try {
-      const history = customHistory ?? grouped[targetSender] ?? []
+      const history =
+        customHistory ??
+        (session
+          ? getConversationForLLM(chatMessagesMap[session.partition] ?? [], targetSender, session.partition)
+          : grouped[targetSender] ?? [])
       const msgs = buildMessages(history, config, {
         extraPrompt: workbenchPrompt.trim() ? '\n\n额外要求：' + workbenchPrompt.trim() : undefined,
         fallbackMessage: history.length === 0 ? '请直接输出一段打招呼的开场白，不要输出任何思考过程或分析。' : undefined,
@@ -820,7 +749,8 @@ export function AutoReplyPanel({
             onChange={(val) => {
               setAutoReplyMode(val as 'global' | 'single')
               if (val === 'single' && !autoReplyTarget) {
-                const target = replyTarget || [...chatHistory].reverse().find((m) => m.isFromUser)?.sender || ''
+                const allMsgs = chatMessagesMap[session?.partition ?? ''] ?? []
+                const target = replyTarget || [...allMsgs].reverse().find((m: ChatMessage) => m.isFromUser)?.sender || ''
                 if (target) {
                   setReplyTarget(target)
                   setAutoReplyTarget(target)

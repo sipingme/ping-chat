@@ -63,7 +63,12 @@ export function startAutoReplyScraper(partition: string): void {
       // Chat list stats (every tick, only when monitoring is enabled)
       if (monitoringEnabled) {
         void adapter.extractChatListStats(partition).then((stats: any) => {
-          if (stats) ipcRenderer.send('chat:stats', stats)
+          if (stats) {
+            ipcRenderer.send('chat:stats', stats)
+          } else if (adapter.isLoginPage?.()) {
+            // No chat stats + login page detected → session is logged out
+            ipcRenderer.send('session:status', { partition, status: 'login' })
+          }
         })
       }
 
@@ -135,8 +140,11 @@ export function startAutoReplyScraper(partition: string): void {
     })
 
     /* ── IPC listeners delegated to adapter ───────────── */
+    let chatHydrationEndTime = 0
+
     ipcRenderer.on('chat:select', (_event, payload: { partition: string; contactName: string }) => {
       console.log('[ChatStats] selectChat request for:', payload.contactName)
+      chatHydrationEndTime = Date.now() + 2500
       suppressProgrammaticClick = true
       if (suppressClickTimeout) clearTimeout(suppressClickTimeout)
       suppressClickTimeout = setTimeout(() => { suppressProgrammaticClick = false }, 5000)
@@ -159,12 +167,24 @@ export function startAutoReplyScraper(partition: string): void {
     /* ── Message monitoring ────────────────────────────── */
     setTimeout(() => {
       const msgs = adapter.extractMessages(partition)
-      msgs.forEach((m) => ipcRenderer.send('chat:message', m))
+      msgs.forEach((m) => ipcRenderer.send('chat:message', { ...m, historical: true }))
     }, 3000)
 
     const messageCache = new Map<string, { sender: string; content: string; timestamp: number }>()
     function getCacheKey(sender: string, content: string): string {
       return `${sender}:${content}`
+    }
+
+    function emitChatMessage(m: ChatMessagePayload, forceHistorical?: boolean): void {
+      const cacheKey = getCacheKey(m.sender, m.content)
+      const cached = messageCache.get(cacheKey)
+      if (cached && Math.abs(m.timestamp - cached.timestamp) < 2000) {
+        console.log('%c[Scraper]', 'color: #ff9800; font-weight: bold', 'skipping duplicate message within 2s:', m.sender, m.content.slice(0, 30))
+        return
+      }
+      const historical = forceHistorical ?? Date.now() < chatHydrationEndTime
+      ipcRenderer.send('chat:message', { ...m, historical })
+      messageCache.set(cacheKey, { sender: m.sender, content: m.content, timestamp: m.timestamp })
     }
 
     const observer = new MutationObserver((mutations) => {
@@ -182,17 +202,8 @@ export function startAutoReplyScraper(partition: string): void {
       if (newMsgs.length === 0 && addedNodes.length > 0) {
         newMsgs = adapter.extractMessages(partition)
       }
-      newMsgs.forEach((m) => {
-        const cacheKey = getCacheKey(m.sender, m.content)
-        const cached = messageCache.get(cacheKey)
-        // WeChat may re-render the same message into a new DOM element; skip duplicates within 2s
-        if (cached && Math.abs(m.timestamp - cached.timestamp) < 2000) {
-          console.log('%c[Scraper]', 'color: #ff9800; font-weight: bold', 'skipping duplicate message within 2s:', m.sender, m.content.slice(0, 30))
-          return
-        }
-        ipcRenderer.send('chat:message', m)
-        messageCache.set(cacheKey, { sender: m.sender, content: m.content, timestamp: m.timestamp })
-      })
+      const bulkHistorical = newMsgs.length >= 5
+      newMsgs.forEach((m) => emitChatMessage(m, bulkHistorical))
 
       for (const mut of mutations) {
         if (mut.type === 'childList') continue

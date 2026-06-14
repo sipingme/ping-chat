@@ -4,6 +4,15 @@ import { interpolateTemplateVars } from '../config/defaults'
 import { handleCommand } from '../utils/commandHandler'
 import { pluginManager } from '../utils/pluginManager'
 import { LLMService, buildMessages } from '../services/llmService'
+import { useAppStore } from '../store/appStore'
+import {
+  getConversationForLLM,
+  getPendingUserMessages,
+  isMessagePending,
+  makeSelfReply,
+  messageKey,
+  seedProcessedKeys,
+} from '../utils/conversationUtils'
 
 interface AutoReplyEngineDeps {
   autoReplyConfig: AutoReplyConfig
@@ -88,11 +97,15 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
   // Keep LLM config in sync
   llmServiceRef.current.updateConfig(autoReplyConfig)
 
+  const recordSelfReply = (partition: string, content: string): void => {
+    useAppStore.getState().appendChatMessage(partition, makeSelfReply(partition, content))
+  }
+
   /* ── Core message handler (plain fn, reads state via refs) ── */
   const handleQueuedMessage = async (message: ChatMessage): Promise<void> => {
     if (isHandlingRef.current) return
     isHandlingRef.current = true
-    const messageKey = `${message.partition}:${message.sender}:${message.content}:${message.timestamp}`
+    const messageKeyStr = messageKey(message)
     try {
       const config = configRef.current
       if (!config?.apiKey) return
@@ -129,7 +142,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         console.error('[AutoReply] selectChat failed, re-queuing message:', selectErr)
         // Re-queue: push back to front so it gets retried
         pendingQueueRef.current.unshift(message)
-        processedKeysRef.current.delete(messageKey)
+        processedKeysRef.current.delete(messageKeyStr)
         return
       }
       await new Promise((resolve) => setTimeout(resolve, 500))
@@ -144,6 +157,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         if (pluginReply) {
           try {
             await window.pingChat.sendReply(message.partition, pluginReply, config.autoSend)
+            if (config.autoSend) recordSelfReply(message.partition, pluginReply)
           } catch (e) {
             console.error('[AutoReply] plugin sendReply failed:', e)
           }
@@ -160,6 +174,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         if (cmdResult.handled && cmdResult.reply) {
           try {
             await window.pingChat.sendReply(message.partition, cmdResult.reply, config.autoSend)
+            recordSelfReply(message.partition, cmdResult.reply)
           } catch (e) {
             console.error('[AutoReply] command sendReply failed:', e)
           }
@@ -171,6 +186,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
         const keywordReply = interpolateTemplateVars(config.keywordResponse, { contactName: message.sender, partition: message.partition })
         try {
           await window.pingChat.sendReply(message.partition, keywordReply, config.autoSend)
+          if (config.autoSend) recordSelfReply(message.partition, keywordReply)
         } catch (e) {
           console.error('[AutoReply] keyword sendReply failed:', e)
         }
@@ -193,7 +209,11 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
       // Start LLM generation — notify UI
       setAutoReplyGlobalGenerating(true)
 
-      const history = messagesRef.current.filter((m) => m.partition === message.partition && !m.isGroup)
+      const history = getConversationForLLM(
+        getChatMessages(message.partition) || [],
+        message.sender,
+        message.partition
+      )
       const msgs = buildMessages(history, config)
 
       try {
@@ -203,6 +223,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
             const interpolatedReply = interpolateTemplateVars(reply, { contactName: message.sender, partition: message.partition })
             try {
               await window.pingChat.sendReply(message.partition, interpolatedReply, config.autoSend)
+              recordSelfReply(message.partition, interpolatedReply)
             } catch (e) {
               console.error('[AutoReply] AI sendReply failed:', e)
             }
@@ -246,7 +267,7 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
       isHandlingRef.current = false
       setAutoReplyGlobalGenerating(false)
       // Mark this message as handled so pollUnreadContacts won't re-process it
-      processedKeysRef.current.add(messageKey)
+      processedKeysRef.current.add(messageKeyStr)
     }
   }
 
@@ -311,14 +332,22 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
     if (!enabledRef.current) return
     if (modeRef.current !== 'global') return
     if (!message) return
+    if (message.historical) return
     if (globalPendingPartitionRef.current && !message.isFromUser && message.partition === globalPendingPartitionRef.current) {
       globalPendingPartitionRef.current = null
       return
     }
     if (!message.isFromUser) return
 
-    const key = `${message.partition}:${message.sender}:${message.content}:${message.timestamp}`
+    const key = messageKey(message)
     if (processedKeysRef.current.has(key)) return
+
+    const storeMsgs = getChatMessages(message.partition) || []
+    if (!isMessagePending(storeMsgs, message)) {
+      processedKeysRef.current.add(key)
+      console.log('[AutoReply] skipping already-replied message from', message.sender, message.content.slice(0, 30))
+      return
+    }
 
     if (message.isGroup) {
       console.log('[AutoReply] ignoring group message from', message.sender)
@@ -371,34 +400,16 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
           }
         }
 
-        // Fallback: also check message store for unreplied user messages (catches the case
-        // where single mode already sent a reply, clearing the webview unread count)
-        const msgs = getChatMessages(session.partition) || []
-        const unrepliedSenders = new Set<string>()
-        let lastUserMsgIndex = -1
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (!msgs[i].isFromUser) break // last reply from us
-          if (msgs[i].isFromUser && !msgs[i].isGroup) {
-            lastUserMsgIndex = i
-            unrepliedSenders.add(msgs[i].sender)
-          }
-        }
-        for (const sender of unrepliedSenders) {
-          if (!contactsToProcess.some((p) => p.name === sender)) {
-            // Gatekeeper: if stats not ready, skip unknown senders
-            if (!stats) {
-              console.log('%c[AutoReply]', 'color: #ff9800; font-weight: bold', 'stats not ready, skipping sender in poll:', sender)
-              continue
+        // Fallback: check store for contacts with unreplied user messages
+        const storeMsgs = getChatMessages(session.partition) || []
+        if (stats?.contacts?.length) {
+          for (const c of stats.contacts) {
+            if (c.isGroup) continue
+            if (contactsToProcess.some((p) => p.name === c.name)) continue
+            const pending = getPendingUserMessages(storeMsgs, c.name)
+            if (pending.length > 0) {
+              contactsToProcess.push({ name: c.name, isGroup: false })
             }
-            const senderContact = stats.contacts?.find((c: any) => c.name === sender)
-            const senderGroup = stats.groups?.find((g: any) => g.name === sender)
-            if (!senderContact && !senderGroup) {
-              console.log('%c[AutoReply]', 'color: #ff9800; font-weight: bold', 'skipping unknown sender in poll (likely official account):', sender,
-                'stats contacts=', stats.contacts?.map((c: any) => c.name),
-                'stats groups=', stats.groups?.map((g: any) => g.name))
-              continue
-            }
-            contactsToProcess.push({ name: sender, isGroup: false })
           }
         }
 
@@ -411,14 +422,13 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
 
           await window.pingChat.selectChat(session.partition, contact.name)
           setTargetRef.current(contact.name)
-          // Mark AFTER selectChat succeeds so failures don't permanently lock the contact
           processedContactsRef.current.add(key)
           await new Promise((r) => setTimeout(r, 800))
           const msgs = getChatMessages(session.partition) || []
-          const userMsgs = msgs.filter((m: ChatMessage) => m.sender === contact.name && m.isFromUser)
-          const lastMsg = userMsgs[userMsgs.length - 1]
-          if (!lastMsg) continue
-          const msgKey = `${lastMsg.partition}:${lastMsg.sender}:${lastMsg.content}:${lastMsg.timestamp}`
+          const pending = getPendingUserMessages(msgs, contact.name)
+          if (pending.length === 0) continue
+          const lastMsg = pending[pending.length - 1]
+          const msgKey = messageKey(lastMsg)
           if (processedKeysRef.current.has(msgKey)) {
             console.log('[AutoReply] msg already handled, skipping LLM for', contact.name)
             continue
@@ -472,6 +482,26 @@ export function useAutoReplyEngine(deps: AutoReplyEngineDeps): AutoReplyEngine {
   }, [setAutoReplyMessages, clearChatMessages])
 
   /* ── Side effects ── */
+  const seedAllContacts = useCallback((): void => {
+    for (const session of sessionsRef.current) {
+      if (!session.partition) continue
+      const stats = getChatStats(session.partition)
+      const msgs = getChatMessages(session.partition) || []
+      const contactNames = (stats?.contacts ?? [])
+        .filter((c: { isGroup: boolean }) => !c.isGroup)
+        .map((c: { name: string }) => c.name)
+      if (contactNames.length > 0) {
+        seedProcessedKeys(processedKeysRef.current, msgs, contactNames)
+      }
+    }
+  }, [getChatStats, getChatMessages])
+
+  // On enable: seed processed keys from store (covers toggle off → on)
+  useEffect(() => {
+    if (!autoReplyEnabled) return
+    seedAllContacts()
+  }, [autoReplyEnabled, seedAllContacts])
+
   useEffect(() => {
     if (!autoReplyEnabled) return
     const start = lastEnqueuedIndexRef.current + 1

@@ -90,6 +90,11 @@ const api = {
     ipcRenderer.on('chat:history', handler)
     return () => ipcRenderer.removeListener('chat:history', handler)
   },
+  onSessionStatus: (callback: (payload: { partition: string; status: 'login' | 'online' }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('session:status', handler)
+    return () => ipcRenderer.removeListener('session:status', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('pingChat', api)

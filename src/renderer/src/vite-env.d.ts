@@ -52,7 +52,7 @@ interface Window {
     setCloudSync: (url: string, apiKey: string, enabled: boolean) => Promise<boolean>
     onScheduledSend: (callback: (payload: { partition: string; content: string; autoSend: boolean }) => void) => () => void
     onChatMessage: (
-      callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number; isGroup?: boolean }) => void
+      callback: (payload: { partition: string; sender: string; content: string; isFromUser: boolean; timestamp: number; isGroup?: boolean; historical?: boolean }) => void
     ) => () => void
     onChatStats: (
       callback: (payload: { partition: string; totalCount: number; groupCount: number; userCount: number; totalUnread: number; contacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; unreadContacts: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }>; groups: Array<{ name: string; isGroup: boolean; unread: number; avatar: string }> }) => void
@@ -63,6 +63,9 @@ interface Window {
     ) => () => void
     onChatHistory: (
       callback: (payload: { partition: string; history: Array<{ sender: string; content: string; isFromUser: boolean; timestamp: number }> }) => void
+    ) => () => void
+    onSessionStatus: (
+      callback: (payload: { partition: string; status: 'login' | 'online' }) => void
     ) => () => void
   }
 }

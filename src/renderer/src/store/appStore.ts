@@ -73,6 +73,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendChatMessage: (partition, message) =>
     set((state) => {
       const prev = state.chatMessagesMap[partition] ?? []
+      const exactDup = prev.some(
+        (m) =>
+          m.sender === message.sender &&
+          m.content === message.content &&
+          m.timestamp === message.timestamp
+      )
+      if (exactDup) return state
+      // Near-dup: same sender + content within 10s (WeChat re-renders create fresh timestamps)
+      const nearDup = prev.some(
+        (m) =>
+          m.sender === message.sender &&
+          m.content === message.content &&
+          Math.abs(m.timestamp - message.timestamp) < 10000
+      )
+      if (nearDup) {
+        return state
+      }
       const next = [...prev, message]
       if (next.length > MAX_MESSAGES_PER_PARTITION) {
         next.splice(0, next.length - MAX_MESSAGES_PER_PARTITION)

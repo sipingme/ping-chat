@@ -1,6 +1,6 @@
 {
   "name": "ping-chat",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "Ping Chat desktop workspace",
   "private": true,
   "main": "./out/main/index.js",

@@ -89,6 +89,22 @@ export function registerChatIpc(registry: WebviewRegistry): void {
     }
   })
 
+  ipcMain.on('session:status', (event, payload: { partition: string; status: 'login' | 'online' }) => {
+    let partition = registry.getPartition(event.sender.id)
+    if (!partition) {
+      partition = payload.partition || ''
+    }
+    if (!partition) {
+      console.warn('[Main] session:status cannot resolve partition for sender:', event.sender.id)
+      return
+    }
+    const enriched = { ...payload, partition }
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      mainWindow.webContents.send('session:status', enriched)
+    }
+  })
+
   ipcMain.on('chat:contact-clicked', (event, payload: { partition: string; name: string; avatar?: string }) => {
     const partition = registry.getPartition(event.sender.id) || payload.partition || ''
     const enriched = { ...payload, partition }

@@ -17,6 +17,7 @@ import { useSensitiveWords } from './hooks/useSensitiveWords'
 import { pluginManager } from './utils/pluginManager'
 import { translateText } from './utils/translate'
 import { useAppStore } from './store/appStore'
+import { makeSelfReply } from './utils/conversationUtils'
 import { TitleBar } from './components/TitleBar'
 import { PlatformSidebar } from './components/PlatformSidebar'
 import { ConversationSidebar } from './components/ConversationSidebar'
@@ -160,19 +161,33 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const unsub = window.pingChat.onChatMessage((payload) => {
-      // Gatekeeper: only accept messages from known contacts/groups
-      const stats = getChatStats(payload.partition)
-      if (stats) {
-        const knownContact = stats.contacts?.find((c: any) => c.name === payload.sender)
-        const knownGroup = stats.groups?.find((g: any) => g.name === payload.sender)
-        if (!knownContact && !knownGroup) {
-          console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'ignored unknown sender (official account?):', payload.sender,
-            'stats contacts=', stats.contacts?.map((c: any) => c.name),
-            'stats groups=', stats.groups?.map((g: any) => g.name))
+      const isSelfMessage = !payload.isFromUser
+
+      // Gatekeeper: user messages must be from known contacts; self messages always allowed
+      if (!isSelfMessage) {
+        const stats = getChatStats(payload.partition)
+        if (stats) {
+          const knownContact = stats.contacts?.find((c: any) => c.name === payload.sender)
+          const knownGroup = stats.groups?.find((g: any) => g.name === payload.sender)
+          if (!knownContact && !knownGroup) {
+            console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'ignored unknown sender (official account?):', payload.sender,
+              'stats contacts=', stats.contacts?.map((c: any) => c.name),
+              'stats groups=', stats.groups?.map((g: any) => g.name))
+            return
+          }
+        } else {
+          console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'stats not ready, ignoring message from:', payload.sender)
           return
         }
-      } else {
-        console.log('%c[AutoReplyMessages]', 'color: #ff9800; font-weight: bold', 'stats not ready, ignoring message from:', payload.sender)
+      }
+
+      appendChatMessage(payload.partition, payload)
+
+      // Historical (chat switch / initial load) and self messages: store only, no auto-reply
+      if (isSelfMessage || payload.historical) {
+        if (payload.historical) {
+          console.log('%c[AutoReplyMessages]', 'color: #9e9e9e', 'historical (store only):', payload.sender, payload.content.slice(0, 30))
+        }
         return
       }
 
@@ -191,10 +206,28 @@ export function App(): JSX.Element {
         console.log('%c[AutoReplyMessages]', 'color: #4caf50; font-weight: bold', 'added:', payload.sender, payload.content.slice(0, 30))
         return [...prev, payload]
       })
-      appendChatMessage(payload.partition, payload)
     })
     return unsub
   }, [])
+
+  // Sync full chat DOM into store (includes self replies missed by incremental observer)
+  useEffect(() => {
+    const unsub = window.pingChat.onChatHistory((payload) => {
+      if (!payload.partition) return
+      for (const h of payload.history) {
+        appendChatMessage(payload.partition, {
+          partition: payload.partition,
+          sender: h.sender,
+          content: h.content,
+          isFromUser: h.isFromUser,
+          timestamp: h.timestamp,
+          isGroup: (h as { isGroup?: boolean }).isGroup,
+          historical: true,
+        })
+      }
+    })
+    return unsub
+  }, [appendChatMessage])
 
   useEffect(() => {
     const unsub = window.pingChat.onChatStats((payload) => {
@@ -205,9 +238,33 @@ export function App(): JSX.Element {
         return
       }
       setChatStats(partition, { ...payload, partition })
+
+      // Mark session as online when chat stats first arrives with contacts
+      if ((payload.contacts && payload.contacts.length > 0) || payload.totalCount > 0) {
+        const state = useAppStore.getState()
+        const session = state.sessions.find((s) => s.partition === partition)
+        if (session && session.status === 'login') {
+          state.updateSession(session.id, (s) => ({ ...s, status: 'online' }))
+          console.log('[Session] marked as online:', partition)
+        }
+      }
     })
     return unsub
   }, [activeSession?.partition])
+
+  useEffect(() => {
+    const unsub = window.pingChat.onSessionStatus((payload) => {
+      const partition = payload.partition || ''
+      if (!partition) return
+      const state = useAppStore.getState()
+      const session = state.sessions.find((s) => s.partition === partition)
+      if (!session) return
+      if (session.status === payload.status) return
+      state.updateSession(session.id, (s) => ({ ...s, status: payload.status }))
+      console.log('[Session] status updated:', partition, '→', payload.status)
+    })
+    return unsub
+  }, [])
 
   const [recalledMessages, setRecalledMessages] = useState<Array<{ partition: string; sender: string; content: string; originalContent: string; timestamp: number }>>([])
 
@@ -446,7 +503,9 @@ export function App(): JSX.Element {
                       return
                     }
                     const modified = pluginManager.onReply(content)
-                    void window.pingChat.sendReply(partition, modified ?? content, autoSend)
+                    const replyText = modified ?? content
+                    void window.pingChat.sendReply(partition, replyText, autoSend)
+                    appendChatMessage(partition, makeSelfReply(partition, replyText))
                   }}
                   chatStats={getChatStats(activeSession?.partition ?? '') ?? null}
                   autoReplyTarget={autoReplyTarget}

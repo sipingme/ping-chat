@@ -10,6 +10,7 @@ export interface ChatMessagePayload {
   isFromUser: boolean
   timestamp: number
   isGroup?: boolean
+  historical?: boolean
 }
 
 export interface ChatContact {
@@ -55,6 +56,8 @@ export interface PlatformAdapter {
   extractMessagesFromNodes?(partition: string, nodes: Node[]): ChatMessagePayload[]
   /** 可选：页面就绪后的平台初始化钩子（如切换 tab） */
   onPageReady?(): void
+  /** 可选：检测当前页面是否为登录页（未登录状态） */
+  isLoginPage?(): boolean
 }
 
 /**

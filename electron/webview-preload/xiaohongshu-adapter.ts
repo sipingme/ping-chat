@@ -37,6 +37,14 @@ export const xiaohongshuAdapter = defineAdapter({
     return window.location.hostname.includes('xiaohongshu') || window.location.hostname.includes('sxt')
   },
 
+  isLoginPage(): boolean {
+    // Already logged in: contact list exists
+    if (document.querySelectorAll('.sx-contact-item').length > 0) return false
+    // Login page indicators
+    const loginSelectors = ['.login', '.login-form', '.login-page', '#login']
+    return loginSelectors.some((sel) => !!document.querySelector(sel))
+  },
+
   extractContactFromElement(el: Element): {
     name: string
     avatarUrl: string
